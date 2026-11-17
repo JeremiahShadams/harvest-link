@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { router } from 'expo-router'
 import { ArrowRight, Check, Clock3, MapPin, PackageCheck, Star } from 'lucide-react-native'
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
@@ -16,13 +16,9 @@ import { supabase } from '@/lib/supabase'
 export function OrdersScreen() {
   const { user, profile } = useHarvestLink()
   const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
-  const [view, setView] = useState<'buyer' | 'farmer'>(profile?.role === 'farmer' ? 'farmer' : 'buyer')
+  const [manualView, setManualView] = useState<'buyer' | 'farmer' | null>(null)
+  const view = manualView ?? (profile?.role === 'farmer' ? 'farmer' : 'buyer')
   const { mutate } = useSWRConfig()
-
-  useEffect(() => {
-    if (profile?.role === 'farmer') setView('farmer')
-    if (profile?.role === 'buyer') setView('buyer')
-  }, [profile?.role])
 
   const visibleOrders = useMemo(() => (orders ?? []).filter((order) => view === 'buyer' ? order.buyer_id === user?.id : order.farmer_id === user?.id), [orders, user?.id, view])
   const updateStatus = async (order: HarvestOrder) => {
@@ -47,8 +43,8 @@ export function OrdersScreen() {
         </View>
         {profile?.role === 'both' ? (
           <View accessibilityRole="tablist" style={styles.segment}>
-            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'buyer' }} onPress={() => setView('buyer')} style={[styles.segmentOption, view === 'buyer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'buyer' && styles.segmentTextSelected]}>My orders</Text></Pressable>
-            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'farmer' }} onPress={() => setView('farmer')} style={[styles.segmentOption, view === 'farmer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'farmer' && styles.segmentTextSelected]}>Farm orders</Text></Pressable>
+            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'buyer' }} onPress={() => setManualView('buyer')} style={[styles.segmentOption, view === 'buyer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'buyer' && styles.segmentTextSelected]}>My orders</Text></Pressable>
+            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'farmer' }} onPress={() => setManualView('farmer')} style={[styles.segmentOption, view === 'farmer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'farmer' && styles.segmentTextSelected]}>Farm orders</Text></Pressable>
           </View>
         ) : null}
         {error ? <MessageBanner>We couldn’t load your orders. Check your connection and try again.</MessageBanner> : null}

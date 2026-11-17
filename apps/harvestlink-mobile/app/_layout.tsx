@@ -18,7 +18,6 @@ export default function RootLayout() {
         <StatusBar style="dark" />
         <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.cream } }}>
           <Stack.Screen name="(tabs)" />
-          <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom' }} />
           <Stack.Screen name="notifications" options={{ animation: 'slide_from_right' }} />
         </Stack>
       </HarvestLinkProvider>

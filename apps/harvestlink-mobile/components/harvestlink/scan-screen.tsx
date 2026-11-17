@@ -4,11 +4,11 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as ImagePicker from 'expo-image-picker'
 import { Image } from 'expo-image'
 import { ArrowRight, Camera, Check, CircleHelp, ImagePlus, Leaf, RotateCcw, ScanLine, ShieldCheck, Sparkles } from 'lucide-react-native'
-import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useSWRConfig } from 'swr'
 import { AppHeader } from './app-header'
-import { AppButton, Card, colors, Eyebrow, MessageBanner, SectionTitle, StatusBadge } from './ui'
+import { AppButton, Card, colors, Eyebrow, MessageBanner, StatusBadge } from './ui'
 import { useHarvestLink } from './context'
 import { supabase, getApiBaseUrl } from '@/lib/supabase'
 import { useScans } from '@/lib/harvestlink/use-data'
@@ -229,7 +229,7 @@ const styles = StyleSheet.create({
   privacyText: { color: colors.muted, flex: 1, fontSize: 10, lineHeight: 15 },
   cameraWrap: { borderRadius: 16, height: 330, overflow: 'hidden', position: 'relative' },
   camera: { height: '100%', width: '100%' },
-  cameraFrame: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  cameraFrame: { alignItems: 'center', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
   frameCorner: { borderColor: '#FFFFFF', borderLeftWidth: 3, borderTopWidth: 3, height: 26, left: 22, position: 'absolute', top: 24, width: 26 },
   frameTopRight: { borderLeftWidth: 0, borderRightWidth: 3, left: undefined, right: 22 },
   frameBottomLeft: { borderBottomWidth: 3, borderTopWidth: 0, bottom: 73, top: undefined },

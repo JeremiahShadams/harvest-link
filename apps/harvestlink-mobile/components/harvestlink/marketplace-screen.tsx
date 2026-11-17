@@ -104,7 +104,7 @@ const styles = StyleSheet.create({
   content: { alignSelf: 'center', gap: 13, maxWidth: 520, paddingBottom: 26, width: '100%' },
   hero: { borderRadius: 23, height: 196, justifyContent: 'flex-end', marginHorizontal: 18, overflow: 'hidden' },
   heroImage: { borderRadius: 23 },
-  heroShade: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(18,45,31,0.52)' },
+  heroShade: { backgroundColor: 'rgba(18,45,31,0.52)', bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
   heroCopy: { gap: 7, padding: 18 },
   heroTitle: { color: colors.white, fontSize: 26, fontWeight: '700', letterSpacing: -0.8, lineHeight: 30, maxWidth: 300 },
   heroSubtitle: { color: '#F3F1E8', fontSize: 12, lineHeight: 17, maxWidth: 310 },

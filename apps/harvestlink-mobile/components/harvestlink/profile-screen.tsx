@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { router } from 'expo-router'
 import { ArrowLeft, Check, LogOut, ShieldCheck } from 'lucide-react-native'
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { AppButton, Card, colors, Eyebrow, MessageBanner, SectionTitle, TextField } from './ui'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { AppButton, Card, colors, Eyebrow, MessageBanner, TextField } from './ui'
 import { PhoneAuthForm } from './phone-auth-form'
 import { useHarvestLink } from './context'
 import { supabase } from '@/lib/supabase'
@@ -17,20 +18,23 @@ const roleOptions: { value: HarvestRole; label: string }[] = [
 
 export function ProfileScreen() {
   const { user, profile, authLoading, profileError, refreshProfile } = useHarvestLink()
+  const insets = useSafeAreaInsets()
   const [name, setName] = useState('')
   const [farmName, setFarmName] = useState('')
   const [role, setRole] = useState<HarvestRole>('buyer')
   const [area, setArea] = useState('Lekki')
+  const [syncedProfileId, setSyncedProfileId] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
 
-  useEffect(() => {
-    if (!profile) return
+  // Reset the form when a different profile signs in (React's "adjust state during render" pattern).
+  if (profile && profile.id !== syncedProfileId) {
+    setSyncedProfileId(profile.id)
     setName(profile.display_name)
     setFarmName(profile.farm_name ?? '')
     setRole(profile.role)
     setArea(profile.default_area)
-  }, [profile])
+  }
 
   const saveProfile = async () => {
     if (!user || !profile) return
@@ -63,9 +67,11 @@ export function ProfileScreen() {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView contentContainerStyle={[styles.content, { paddingTop: 12 + insets.top }]} keyboardShouldPersistTaps="handled">
       <View style={styles.topline}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.backButton}><ArrowLeft size={19} color={colors.ink} /></Pressable>
+        {router.canGoBack() ? (
+          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.backButton}><ArrowLeft size={19} color={colors.ink} /></Pressable>
+        ) : null}
         <Eyebrow>YOUR HARVESTLINK</Eyebrow>
         <View style={styles.toplineSpacer} />
       </View>

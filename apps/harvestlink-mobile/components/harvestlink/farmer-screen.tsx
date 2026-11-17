@@ -1,75 +1,42 @@
 import { useMemo, useState } from 'react'
 import { router } from 'expo-router'
-import { ArrowRight, BadgeCheck, ChartNoAxesCombined, Clock3, FileCheck2, Leaf, Plus, Share2, Sprout } from 'lucide-react-native'
-import { ActivityIndicator, Alert, Platform, ScrollView, Share, StyleSheet, Text, View } from 'react-native'
+import { BadgeCheck, ChartNoAxesCombined, FileCheck2, Leaf, Plus, Share2, Sprout } from 'lucide-react-native'
+import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useSWRConfig } from 'swr'
 import { AppHeader } from './app-header'
 import { ListingForm } from './listing-form'
 import { AppButton, Card, colors, EmptyState, Eyebrow, MessageBanner, SectionTitle, StatusBadge } from './ui'
 import { useHarvestLink } from './context'
 import { useFarmerListings, useOrders, useScans } from '@/lib/harvestlink/use-data'
 import { formatDate, formatNaira, formatQuantity } from '@/lib/harvestlink/utils'
-import { supabase, getApiBaseUrl } from '@/lib/supabase'
+import { useActivityReport } from '@/lib/harvestlink/use-report'
+import { computeFarmerSignals } from '@/lib/harvestlink/signals'
 import { listingImage } from '@/lib/harvestlink/images'
 import { Image } from 'expo-image'
-import type { HarvestOrder, Listing } from '@/lib/harvestlink/types'
+import type { Listing } from '@/lib/harvestlink/types'
 
 export function FarmerScreen() {
-  const { user, profile, latestScan, setLatestScan } = useHarvestLink()
+  const { user, profile, latestScan } = useHarvestLink()
   const { data: listings, error: listingError, isLoading: listingsLoading, mutate: mutateListings } = useFarmerListings(user?.id ?? null)
   const { data: orders, mutate: mutateOrders } = useOrders(user?.id ?? null)
   const { data: scans } = useScans(user?.id ?? null)
-  const { mutate } = useSWRConfig()
   const [showListingForm, setShowListingForm] = useState(false)
-  const [reportBusy, setReportBusy] = useState(false)
-  const [reportUrl, setReportUrl] = useState('')
-  const [message, setMessage] = useState('')
+  const report = useActivityReport()
 
   const farmerOrders = useMemo(() => (orders ?? []).filter((order) => order.farmer_id === user?.id), [orders, user?.id])
   const activeListings = (listings ?? []).filter((listing) => listing.status === 'active')
-  const last30 = useMemo(() => {
-    const threshold = Date.now() - 30 * 86_400_000
-    const recent = (value: string) => new Date(value).getTime() >= threshold
-    const recentListings = (listings ?? []).filter((listing) => recent(listing.created_at))
-    const recentOrders = farmerOrders.filter((order) => recent(order.created_at))
-    const deliveredOrders = recentOrders.filter((order) => order.status === 'delivered')
-    const completed = deliveredOrders.reduce((total, order) => total + Number(order.quantity_kg) * Number(order.unit_price_per_kg), 0)
-    return { listings: recentListings.length, orders: recentOrders.length, delivered: deliveredOrders.length, sales: completed, scans: (scans ?? []).filter((scan) => recent(scan.created_at)).length }
-  }, [farmerOrders, listings, scans])
-  const activityScore = Math.min(100, Math.round(Math.min(last30.listings, 8) * 4 + Math.min(last30.orders, 10) * 3 + Math.min(last30.delivered, 8) * 4))
-  const deliveryRate = last30.orders ? Math.round((last30.delivered / last30.orders) * 100) : 0
-
-  const createReport = async () => {
-    if (!user) return router.push('/profile' as never)
-    setReportBusy(true)
-    setMessage('')
-    const { data, error } = await supabase.rpc('create_activity_report')
-    setReportBusy(false)
-    if (error || !data) {
-      setMessage(error?.message.includes('farmer_profile_required') ? 'Add your farmer profile details before creating a report.' : 'We couldn’t prepare the activity report. Try again shortly.')
-      return
-    }
-    const url = `${getApiBaseUrl()}/report/${data}`
-    setReportUrl(url)
-    await shareReport(url)
-  }
-
-  const shareReport = async (url: string) => {
-    const message = `My HarvestLink activity report: ${url}\nThis is supporting evidence based on real marketplace activity, not a credit guarantee.`
-    try {
-      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({ title: 'HarvestLink activity report', text: message, url })
-      } else if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
-        await navigator.clipboard.writeText(message)
-        Alert.alert('Report link copied', 'Your private activity report link is ready to share.')
-      } else {
-        await Share.share({ message, url, title: 'HarvestLink activity report' })
-      }
-    } catch {
-      setMessage('Your report is ready. Use the share button again to send its private link.')
-    }
-  }
+  const signals = useMemo(() => {
+    if (!user) return null
+    return computeFarmerSignals({
+      userId: user.id,
+      listings: listings ?? [],
+      orders: orders ?? [],
+      scans: scans ?? [],
+      days: 30,
+    })
+  }, [listings, orders, scans, user])
+  const activityScore = signals?.activityScore ?? 0
+  const deliveryRate = signals?.deliveryRate ?? 0
 
   const farmerRole = profile?.role === 'farmer' || profile?.role === 'both'
   const lastScanMatches = latestScan && latestScan.crop.toLowerCase().includes('tomato') ? latestScan : latestScan
@@ -98,9 +65,9 @@ export function FarmerScreen() {
 
             <View style={styles.metricsGrid}>
               <MetricCard label="Active harvests" value={activeListings.length} icon={<Leaf color={colors.leaf} size={17} />} />
-              <MetricCard label="Orders received" value={last30.orders} icon={<ChartNoAxesCombined color={colors.leaf} size={17} />} />
-              <MetricCard label="Delivered" value={last30.delivered} icon={<BadgeCheck color={colors.leaf} size={17} />} />
-              <MetricCard label="Sales recorded" value={formatNaira(last30.sales)} icon={<FileCheck2 color={colors.leaf} size={17} />} />
+              <MetricCard label="Orders received" value={signals?.ordersReceived ?? 0} icon={<ChartNoAxesCombined color={colors.leaf} size={17} />} />
+              <MetricCard label="Delivered" value={signals?.ordersDelivered ?? 0} icon={<BadgeCheck color={colors.leaf} size={17} />} />
+              <MetricCard label="Sales recorded" value={formatNaira(signals?.salesValue ?? 0)} icon={<FileCheck2 color={colors.leaf} size={17} />} />
             </View>
 
             <View style={styles.actionRow}>
@@ -113,13 +80,13 @@ export function FarmerScreen() {
               <View style={styles.signalHead}><View><Eyebrow>ACTIVITY SIGNAL</Eyebrow><Text style={styles.cardTitle}>A steady rhythm.</Text></View><View style={styles.score}><Text style={styles.scoreValue}>{activityScore}</Text><Text style={styles.scoreOutOf}>/ 100</Text></View></View>
               <Text style={styles.signalDescription}>A simple, explainable summary of recent marketplace activity—not a credit score or lending decision.</Text>
               <View style={styles.signalTrack}><View style={[styles.signalFill, { width: `${activityScore}%` }]} /></View>
-              <View style={styles.signalGrid}><SignalDetail label="Listed · 30 days" value={last30.listings} /><SignalDetail label="Scans · 30 days" value={last30.scans} /><SignalDetail label="Delivery rate" value={`${deliveryRate}%`} /></View>
+              <View style={styles.signalGrid}><SignalDetail label="Listed · 30 days" value={signals?.listingsCreated ?? 0} /><SignalDetail label="Scans · 30 days" value={signals?.scansCompleted ?? 0} /><SignalDetail label="Delivery rate" value={`${deliveryRate}%`} /></View>
             </Card>
 
             <View style={styles.reportRow}><View style={styles.reportCopy}><Eyebrow>SHARE YOUR STORY</Eyebrow><Text style={styles.reportTitle}>A real record, ready to share.</Text><Text style={styles.helper}>Create a private 30-day activity snapshot for a cooperative, bank, or grant programme.</Text></View><FileCheck2 color={colors.pine} size={21} /></View>
-            {reportUrl ? <Card style={styles.reportReady}><View style={styles.reportLinkCopy}><Text style={styles.reportLinkLabel}>Your private report link</Text><Text style={styles.reportLink} numberOfLines={2}>{reportUrl}</Text></View><AppButton label="Share" variant="secondary" icon={<Share2 color={colors.pine} size={15} />} onPress={() => void shareReport(reportUrl)} /></Card> : null}
-            {message ? <MessageBanner tone={message.includes('ready') ? 'info' : 'error'}>{message}</MessageBanner> : null}
-            <AppButton label={reportBusy ? 'Preparing report…' : reportUrl ? 'Create a new report' : 'Generate activity report'} icon={<Share2 color={colors.white} size={16} />} onPress={() => void createReport()} loading={reportBusy} style={styles.reportButton} />
+            {report.url ? <Card style={styles.reportReady}><View style={styles.reportLinkCopy}><Text style={styles.reportLinkLabel}>Your private report link</Text><Text style={styles.reportLink} numberOfLines={2}>{report.url}</Text></View><AppButton label="Share" variant="secondary" icon={<Share2 color={colors.pine} size={15} />} onPress={() => void report.share(report.url)} /></Card> : null}
+            {report.message ? <MessageBanner tone={report.message.includes('ready') ? 'info' : 'error'}>{report.message}</MessageBanner> : null}
+            <AppButton label={report.busy ? 'Preparing report…' : report.url ? 'Create a new report' : 'Generate activity report'} icon={<Share2 color={colors.white} size={16} />} onPress={() => void report.create()} loading={report.busy} style={styles.reportButton} />
             <Text style={styles.disclaimer}>This report reflects real marketplace activity. It does not guarantee a loan or replace a lender’s review.</Text>
 
             <View style={styles.listingsHead}><SectionTitle eyebrow="YOUR HARVESTS" title="Listings & orders" /><StatusBadge label={`${activeListings.length} active`} /></View>

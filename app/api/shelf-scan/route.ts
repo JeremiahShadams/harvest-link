@@ -9,7 +9,7 @@ const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const MAX_SCANS_PER_HOUR = 8
 const supportedImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
-function corsHeaders(request: NextRequest) {
+function corsHeaders(request: NextRequest): Record<string, string> {
   const origin = request.headers.get('origin')
   if (!origin) return {}
   try {
@@ -50,7 +50,7 @@ function parseEstimate(text: string) {
 }
 
 export async function OPTIONS(request: NextRequest) {
-  return new NextResponse(null, { status: 204, headers: corsHeaders(request) })
+  return new NextResponse(null, { status: 204, headers: new Headers(corsHeaders(request)) })
 }
 
 export async function POST(request: NextRequest) {

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowRight, Check, X } from 'lucide-react-native'
-import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSWRConfig } from 'swr'
 import { useHarvestLink } from './context'
 import { AppButton, colors, Eyebrow, MessageBanner, TextField } from './ui'
