@@ -15,14 +15,16 @@ export default function TabLayout() {
         headerShown: false,
         tabBarActiveTintColor: colors.pine,
         tabBarInactiveTintColor: colors.muted,
-        tabBarStyle: {
-          backgroundColor: colors.white,
-          borderTopColor: colors.line,
-          borderTopWidth: 1,
-          height: 78,
-          paddingBottom: 18,
-          paddingTop: 9,
-        },
+        tabBarStyle: isFarmer
+          ? { display: 'none' }
+          : {
+              backgroundColor: colors.white,
+              borderTopColor: colors.line,
+              borderTopWidth: 1,
+              height: 78,
+              paddingBottom: 18,
+              paddingTop: 9,
+            },
         tabBarLabelStyle: { fontSize: 10, fontWeight: '600', marginTop: 2 },
         tabBarHideOnKeyboard: true,
       }}
@@ -49,6 +51,10 @@ export default function TabLayout() {
           title: 'Orders',
           tabBarIcon: ({ color, size }) => <ClipboardList color={color} size={size} />,
         }}
+      />
+      <Tabs.Screen
+        name="chats"
+        options={{ href: null }}
       />
       <Tabs.Screen
         name="signals"
