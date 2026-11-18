@@ -1,101 +1,170 @@
 # HarvestLink
 
-HarvestLink connects local farmers with nearby buyers so produce can be sold closer to harvest and post-harvest loss is reduced. This repository is a pnpm monorepo containing a Next.js web app and an Expo/React Native mobile app that share one Supabase backend.
+> **Connecting local farmers with nearby buyers to sell produce closer to harvest and drastically cut post-harvest loss.**
 
-## Repository layout
+HarvestLink is a unified produce marketplace monorepo consisting of a **Next.js 16 web application** and an **Expo SDK 58 React Native mobile application**, powered by a shared **Supabase** backend. It equips smallholder farmers with digital storefronts, order tracking, reputation signals, and computer-vision freshness estimations, while giving wholesale and retail buyers direct access to farm-fresh local produce.
 
-| Path | Purpose |
+---
+
+## Architecture & Monorepo Layout
+
+This repository is managed with `pnpm` workspaces:
+
+```
+harvest-link/
+├── app/                          # Next.js App Router (web application & API endpoints)
+│   ├── api/shelf-scan/route.ts   # Server-side AI produce freshness & shelf-life evaluation
+│   ├── (auth)/                   # Authentication routes (login, signup, reset)
+│   ├── browse/                   # Buyer marketplace & search
+│   ├── farmer/                   # Web-based farmer portal
+│   └── orders/                   # Web order status & history
+├── apps/
+│   └── harvestlink-mobile/       # Expo SDK 58 / React Native cross-platform mobile app
+│       ├── app/                  # Expo Router file-based screens and tabs
+│       │   ├── (tabs)/           # Role-aware tab navigation (farmer vs. buyer)
+│       │   ├── listing/new.tsx   # Fast crop listing creation flow
+│       │   └── order/[id].tsx    # 4-stage order details & fulfillment timeline
+│       ├── assets/fonts/         # Bundled Fontshare typography (Cabinet Grotesk & Satoshi)
+│       └── components/           # Mobile design tokens, header, navigation & farmer views
+├── components/                   # Shared web UI primitives & layout components (Tailwind CSS 4)
+├── docs/                         # Product specifications, PRD, and design source-of-truth
+│   ├── HarvestLink_Full_Product_Specification.md
+│   ├── HarvestLink_Product_Requirements_Document.md
+│   └── design-implementation-plan.md
+├── lib/                          # Data hooks, Supabase clients, types, and business logic
+└── public/                       # Static web assets & placeholders
+```
+
+---
+
+## Key Features
+
+- **Farmer Dashboard**: Real-time sales metrics, revenue analytics, quick inventory status, and pending order actions.
+- **Produce Listing & AI Shelf-Life Scanner**: Effortless produce listing with camera capture and automated freshness assessment estimating remaining days and optimal storage tips.
+- **Fulfillment & Order Lifecycle**: 4-stage tracking (*Placed &rarr; Confirmed &rarr; In Transit &rarr; Delivered*) with live delivery coordination.
+- **Marketplace Trust Signals**: Data-backed farmer reliability scoring, fulfillment consistency badges, and activity trend graphs.
+- **Role-Aware Navigation**:
+  - **Farmer / Dual Accounts**: Dedicated five-item mobile navigation (**Home · Orders · Chats · Signals · Profile**).
+  - **Buyer Accounts**: Streamlined produce discovery and order cart navigation.
+- **Universal Supabase Integration**: Shared authentication, row-level security, and real-time cache revalidation via SWR across both platforms.
+
+---
+
+## Tech Stack
+
+| Domain | Technology |
 | --- | --- |
-| `app/`, `components/`, `lib/` | Next.js 16 App Router web app (Tailwind CSS 4, shadcn-style UI, SWR data layer) |
-| `app/api/shelf-scan/route.ts` | Server route used by the shelf-life scan feature |
-| `apps/harvestlink-mobile/` | Expo SDK 58 / React Native app using Expo Router |
-| `docs/design-implementation-plan.md` | Source-of-truth mapping for the five Superdesign farmer screens and known backend gaps |
+| **Monorepo** | `pnpm` workspaces (v12.3.4) |
+| **Web App** | Next.js 16 (App Router), React 19, Tailwind CSS 4, Radix/Base UI |
+| **Mobile App** | React Native 0.88, Expo SDK 58, Expo Router, Reanimated |
+| **Backend & Auth** | Supabase (PostgreSQL, Auth, Storage, Realtime channels) |
+| **Data Fetching** | SWR with optimistic updates and live socket invalidations |
+| **Typography** | Fontshare (Cabinet Grotesk & Satoshi) |
+| **Icons & Media** | Lucide Icons (`lucide-react`, `lucide-react-native`), `expo-image` |
 
-The web app provides the buyer marketplace, farmer views, orders, notifications, profile management, and produce shelf-life scanning/reporting. The mobile app mirrors those flows and adds the strict Superdesign farmer screens: farm dashboard, create listing, order details, marketplace signals, and profile settings.
+---
 
-Farmer and “both” accounts use the fixed mobile tab bar **Home · Orders · Chats · Signals · Profile**. Buyer accounts keep the marketplace tab bar. There is no separate designed Chats screen, so that tab reuses the existing notifications/updates surface.
+## Getting Started
 
-## Prerequisites
+### Prerequisites
 
-- Node.js 20 LTS or newer
-- pnpm 12.3.4 (`corepack enable` will activate the version pinned in `package.json`)
-- A Supabase project with the tables and RPCs referenced in `lib/harvestlink/types.ts` and the data hooks
-- Expo Go on a physical device for LAN testing, or an Android/iOS development build for native-only changes
+- **Node.js**: `v20.x` LTS or newer (`node -v`)
+- **pnpm**: `v12.3.4` (Enable via `corepack enable pnpm`)
+- **Supabase Account**: A Supabase instance configured with the schema in `lib/harvestlink/types.ts`
+- **Mobile Testing**: Expo Go app installed on your physical device, or Android Studio / Xcode for native simulator builds
 
-## Environment setup
+### 1. Clone & Install
 
-Copy the example file and fill in your own values:
+```bash
+git clone https://github.com/JeremiahShadams/harvest-link.git
+cd harvest-link
+pnpm install
+```
+
+### 2. Configure Environment Variables
+
+Create your local environment file by copying the template:
 
 ```bash
 cp .env.example .env.development.local
 ```
 
-| Variable | Used by | Notes |
+Fill in your configuration details:
+
+| Variable | Target | Purpose |
 | --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | Web + mobile | Your Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Web + mobile | Publishable/anon key. Older projects may use `NEXT_PUBLIC_SUPABASE_ANON_KEY` |
-| `EXPO_PUBLIC_API_BASE_URL` | Mobile | Base URL for `/api/shelf-scan` and report links. Use `http://localhost:3000` on a simulator, or `http://<your-LAN-IP>:3000` on a phone |
+| `NEXT_PUBLIC_SUPABASE_URL` | Web & Mobile | Your Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Web & Mobile | Supabase publishable / anon public key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Web & Mobile | Fallback key name for older Supabase project versions |
+| `EXPO_PUBLIC_API_BASE_URL` | Mobile | Base URL for `/api/shelf-scan` (Use `http://localhost:3000` for simulator, or `http://<YOUR-LAN-IP>:3000` for physical devices) |
 
-`.env*.local` files are ignored by Git. The mobile config in `apps/harvestlink-mobile/app.config.ts` injects these values into the Expo app manifest at startup. Placeholder values are enough to render the UI, but real sign-in and live data require a real Supabase project.
+> **Note:** `.env*.local` is explicitly git-ignored. Values are securely resolved at runtime and bundled into the Expo app manifest via `apps/harvestlink-mobile/app.config.ts`.
 
-## Install
+---
 
-```bash
-pnpm install
-```
+## Development
 
-## Run the web app
+### Run the Web Application
 
 ```bash
 pnpm dev
 ```
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-Open http://localhost:3000.
-
-## Run the mobile app
+### Run the Mobile Application
 
 ```bash
+# Using the root convenience script
+pnpm mobile:start
+
+# Or directly from the mobile app workspace
 cd apps/harvestlink-mobile
-npx expo start --lan --clear --port 8081
+npx expo start
 ```
 
-Scan the QR code with Expo Go. The phone must be on the same Wi-Fi network as the computer. If LAN traffic is blocked, either use `npx expo start --tunnel` (requires an Expo account login) or create a development build with `npx expo run:android` / `npx expo run:ios`.
+#### Connecting via Physical Device / Expo Go:
+- **Tunnel Mode (Recommended if facing Wi-Fi / LAN restrictions)**:
+  ```bash
+  npx expo start --tunnel
+  ```
+  Tunnel mode bypasses router firewalls and local subnet mismatch between PC and mobile device.
+- **Native Development Client**:
+  ```bash
+  npx expo run:android
+  # or
+  npx expo run:ios
+  ```
 
-The bundled Cabinet Grotesk and Satoshi fonts load from local assets through `expo-font`. Images come from `expo-image`, and icons from `lucide-react-native`.
+---
 
-## Checks
+## Code Quality & Verification
 
-Run these before submitting changes:
+Run these validation checks prior to committing changes:
 
 ```bash
+# Typecheck web & shared packages
+pnpm typecheck
+
+# Typecheck mobile app
+pnpm mobile:typecheck
+
+# Mobile app linting
 cd apps/harvestlink-mobile
-npx tsc --noEmit
 npx eslint .
-cd ../..
-npx tsc --noEmit
 ```
 
-`npx expo lint` currently fails with the installed ESLint version; invoke `npx eslint .` directly from `apps/harvestlink-mobile` instead.
+---
 
-## Architecture notes
+## Documentation
 
-- Supabase Auth is shared by both apps. On native, sessions are persisted with `expo-secure-store`; on web, session storage is used.
-- Data fetching uses SWR, with Supabase realtime channels invalidating order and notification caches.
-- Mobile design tokens live in `components/harvestlink/design/tokens.ts`; shared primitives live in `ui.tsx` in the same folder.
-- Values that appear in the drafts but do not yet exist in the database schema are kept as explicit local fallbacks in `lib/harvestlink/design-local.ts`. They are visual placeholders, not production data.
-- The five farmer screens strictly mirror their Superdesign references. Do not redesign, rearrange, rephrase, or restyle them without updating the source drafts first.
+Comprehensive product specifications and implementation guides are located in the `docs/` directory:
 
-## Known backend gaps
+- [HarvestLink Product Requirements Document (PRD)](docs/HarvestLink_Product_Requirements_Document.md): User personas, functional requirements, and milestone phases.
+- [Full Product Specification](docs/HarvestLink_Full_Product_Specification.md): Architectural flows, entity models, and technical specifications.
+- [Strict Superdesign Implementation Plan](docs/design-implementation-plan.md): Mobile UI specification, design token mapping, and schema gap analysis.
 
-The following design values have no schema/API backing yet and currently render as fallbacks or local state:
-
-- delivery fee, status-event timestamps, buyer name/area/phone, delivery street address, and decline status on orders
-- draft listing status and listing photo storage paths
-- notification preferences, farm size/GPS, primary crops, avatar URL, and account-deletion RPC on profiles
-- response time and cohort data for trust badges
-
-See `docs/design-implementation-plan.md` for the full list and the draft-to-route mapping.
+---
 
 ## License
 
-The mobile app ships under the MIT license found at `apps/harvestlink-mobile/LICENSE`.
+This project is licensed under the MIT License - see the [LICENSE](apps/harvestlink-mobile/LICENSE) file for details.

@@ -26,3 +26,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Expo & Mobile
+.expo/
+dist/
+web-build/
+temp_export/
+
+# OS files
+.DS_Store
+Thumbs.db
