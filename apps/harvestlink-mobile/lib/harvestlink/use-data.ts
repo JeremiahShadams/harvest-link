@@ -1,10 +1,33 @@
 import { useMemo } from 'react'
 import useSWR from 'swr'
 import { supabase } from '@/lib/supabase'
-import { LISTING_COLUMNS } from './types'
-import type { HarvestNotification, HarvestOrder, Listing, ProduceScan } from './types'
+import {
+  LISTING_COLUMNS,
+  LISTING_SUMMARY_COLUMNS,
+  NOTIFICATION_COLUMNS,
+  ORDER_COLUMNS,
+  PROFILE_COLUMNS,
+  SCAN_COLUMNS,
+} from './types'
+import type { HarvestNotification, HarvestOrder, Listing, Profile, ProduceScan } from './types'
 
-const orderColumns = 'id,listing_id,buyer_id,farmer_id,quantity_kg,unit_price_per_kg,status,delivery_window,delivery_area,notes,rating,rating_note,created_at'
+export async function fetchProfile(userId: string): Promise<Profile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select(PROFILE_COLUMNS)
+    .eq('id', userId)
+    .maybeSingle()
+  if (error) throw error
+  return (data as Profile | null) ?? null
+}
+
+export function useProfile(userId: string | null) {
+  return useSWR<Profile | null>(
+    userId ? ['harvestlink-profile', userId] : null,
+    () => fetchProfile(userId as string),
+    { revalidateOnFocus: true },
+  )
+}
 
 export function useListings() {
   return useSWR<Listing[]>('harvestlink-listings', async () => {
@@ -24,7 +47,7 @@ export function useOrders(userId: string | null) {
   return useSWR<HarvestOrder[]>(key, async () => {
     const { data, error } = await supabase
       .from('orders')
-      .select(orderColumns)
+      .select(ORDER_COLUMNS)
       .or(`buyer_id.eq.${userId},farmer_id.eq.${userId}`)
       .order('created_at', { ascending: false })
     if (error) throw error
@@ -33,7 +56,7 @@ export function useOrders(userId: string | null) {
     const listingIds = [...new Set(rows.map((order) => order.listing_id))]
     const { data: listings, error: listingError } = await supabase
       .from('listings')
-      .select('id,crop,farm_name,image_url,category')
+      .select(LISTING_SUMMARY_COLUMNS)
       .in('id', listingIds)
     if (listingError) throw listingError
     const byId = new Map((listings ?? []).map((listing) => [listing.id, listing]))
@@ -57,7 +80,7 @@ export function useScans(userId: string | null) {
   return useSWR<ProduceScan[]>(userId ? ['harvestlink-scans', userId] : null, async () => {
     const { data, error } = await supabase
       .from('produce_scans')
-      .select('id,user_id,crop,remaining_days,confidence,storage_tips,created_at')
+      .select(SCAN_COLUMNS)
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(50)
@@ -70,7 +93,7 @@ export function useNotifications(userId: string | null) {
   return useSWR<HarvestNotification[]>(userId ? ['harvestlink-notifications', userId] : null, async () => {
     const { data, error } = await supabase
       .from('harvest_notifications')
-      .select('id,user_id,kind,title,message,order_id,listing_id,created_at,read_at')
+      .select(NOTIFICATION_COLUMNS)
       .eq('user_id', userId)
       .order('created_at', { ascending: false })
       .limit(100)
@@ -89,10 +112,17 @@ export {
   useRateOrder,
   useCreateListing,
   useUpdateProfile,
+  useMarkNotificationRead,
+  useMarkAllNotificationsRead,
+  useSaveScan,
+  useAnalyzeScan,
+  useSignOut,
+  usePhoneAuth,
   useActivityReport,
+  explainAuthError,
   friendlyOrderError,
   type PlaceOrderInput,
   type CreateListingInput,
   type UpdateProfileInput,
+  type SelectedScanPhoto,
 } from './use-mutations'
-

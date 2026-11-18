@@ -22,7 +22,6 @@ import { useActivityReport } from '@/lib/harvestlink/use-report'
 import { formatQuantity } from '@/lib/harvestlink/utils'
 
 const DESIGN_TOMATOES = 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?q=80&w=150&auto=format&fit=crop'
-const DESIGN_LEAVES = 'https://images.unsplash.com/photo-1576045057995-568f588f82fb?q=80&w=150&auto=format&fit=crop'
 
 type FeedOrder = {
   id: string
@@ -33,7 +32,7 @@ type FeedOrder = {
   rating?: number
 }
 
-export function FarmerDashboardScreen() {
+export function FarmerDashboardScreen({ showBottomNav = true }: { showBottomNav?: boolean }) {
   const { user, profile } = useHarvestLink()
   const { data: listings } = useFarmerListings(user?.id ?? null)
   const { data: orders } = useOrders(user?.id ?? null)
@@ -55,40 +54,35 @@ export function FarmerDashboardScreen() {
     if (report.message) Alert.alert('Activity report', report.message)
   }, [report.message])
 
-  const hasAccount = Boolean(user)
-  const activeListings = listings?.filter((listing) => listing.status === 'active').length ?? (hasAccount ? 0 : 12)
-  const pending = signals?.pendingOrders ?? (hasAccount ? 0 : 4)
-  const monthly = signals?.completedThisMonth ?? (hasAccount ? 0 : 38)
-  const score = signals?.activityScore ?? (hasAccount ? 0 : 92)
-  const deliveryRate = signals?.deliveryRate ?? (hasAccount ? 0 : 98)
-  const sales = signals?.salesValue ?? (hasAccount ? 0 : 450000)
+  const activeListings = listings?.filter((listing) => listing.status === 'active').length ?? 0
+  const pending = signals?.pendingOrders ?? 0
+  const monthly = signals?.completedThisMonth ?? 0
+  const score = signals?.activityScore ?? 0
+  const deliveryRate = signals?.deliveryRate ?? 0
+  const sales = signals?.salesValue ?? 0
 
   const farmerOrders = useMemo(
     () => (orders ?? []).filter((order) => order.farmer_id === user?.id),
     [orders, user?.id],
   )
-  const feedOrders: FeedOrder[] = farmerOrders.length
-    ? farmerOrders.slice(0, 2).map((order) => ({
-        id: order.id,
-        title: `${formatQuantity(order.quantity_kg)} Baskets ${order.listing?.crop ?? 'Produce'}`,
-        status: order.status === 'delivered' ? 'delivered' : 'pending',
-        meta: `Order #${shortOrderId(order.id)} • ${relativeTime(order.created_at)}`,
-        image: order.listing?.image_url?.startsWith('http') ? order.listing.image_url : DESIGN_TOMATOES,
-        rating: order.rating ?? undefined,
-      }))
-    : [
-        { id: '1042', title: '5 Baskets Rodo (Pepper)', status: 'pending', meta: 'Order #1042 • 10 mins ago', image: DESIGN_TOMATOES },
-        { id: '1040', title: '2 Sacks Ugu Leaves', status: 'delivered', meta: 'Order #1040 • Yesterday', image: DESIGN_LEAVES, rating: 5 },
-      ]
+  const feedOrders: FeedOrder[] = farmerOrders.slice(0, 2).map((order) => ({
+    id: order.id,
+    title: `${formatQuantity(order.quantity_kg)} Baskets ${order.listing?.crop ?? 'Produce'}`,
+    status: order.status === 'delivered' ? 'delivered' : 'pending',
+    meta: `Order #${shortOrderId(order.id)} • ${relativeTime(order.created_at)}`,
+    image: order.listing?.image_url?.startsWith('http') ? order.listing.image_url : DESIGN_TOMATOES,
+    rating: order.rating ?? undefined,
+  }))
 
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'Adebayo'
-  const location = profile?.default_area || 'Ikorodu Farm Hub, Lagos'
+  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
+  const location = profile?.default_area || 'Add your area in your profile'
 
   return (
     <DesignScreen
       activeTab="home"
+      showBottomNav={showBottomNav}
       header={<DesignHeader userName={userName} location={location} />}
-      contentStyle={styles.content}
+      contentStyle={[styles.content, !showBottomNav && styles.contentWithoutNav]}
     >
       <View style={styles.overviewGrid}>
         <View style={styles.primaryMetric}>
@@ -139,10 +133,12 @@ export function FarmerDashboardScreen() {
             </View>
             <Text style={styles.sectionSubtitle}>Your marketplace reputation (30 days)</Text>
           </View>
-          <View style={styles.topBadge}>
-            <TrendingUp color={C.farm700} size={12} />
-            <Text style={styles.topBadgeText}>Top 10%</Text>
-          </View>
+          {signals?.hasHistory ? (
+            <View style={styles.topBadge}>
+              <TrendingUp color={C.farm700} size={12} />
+              <Text style={styles.topBadgeText}>Live activity</Text>
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.signalBody}>
@@ -176,39 +172,51 @@ export function FarmerDashboardScreen() {
           </Pressable>
         </View>
         <View style={styles.orderList}>
-          {feedOrders.map((order) => (
-            <Pressable
-              key={order.id}
-              accessibilityRole="button"
-              accessibilityLabel={order.title}
-              onPress={() => router.push(`/order/${order.id}` as never)}
-              style={({ pressed }) => [pressed && styles.pressed]}
-            >
-              <View style={styles.orderCard}>
-                <View style={styles.orderImageWrap}>
-                  <Image source={{ uri: order.image }} style={styles.orderImage} contentFit="cover" />
-                </View>
-                <View style={styles.orderCopy}>
-                  <View style={styles.orderTitleRow}>
-                    <Text style={styles.orderTitle} numberOfLines={1}>{order.title}</Text>
-                    <View style={[styles.statusBadge, order.status === 'pending' ? styles.statusPending : styles.statusDelivered]}>
-                      <Text style={[styles.statusText, order.status === 'pending' ? styles.statusTextPending : styles.statusTextDelivered]}>
-                        {order.status === 'pending' ? 'Pending' : 'Delivered'}
-                      </Text>
+          {feedOrders.length ? feedOrders.map((order) => {
+            const rating = order.rating ?? 0
+            return (
+              <Pressable
+                key={order.id}
+                accessibilityRole="button"
+                accessibilityLabel={order.title}
+                onPress={() => router.push(`/order/${order.id}` as never)}
+                style={({ pressed }) => [pressed && styles.pressed]}
+              >
+                <View style={styles.orderCard}>
+                  <View style={styles.orderImageWrap}>
+                    <Image source={{ uri: order.image }} style={styles.orderImage} contentFit="cover" />
+                  </View>
+                  <View style={styles.orderCopy}>
+                    <View style={styles.orderTitleRow}>
+                      <Text style={styles.orderTitle} numberOfLines={1}>{order.title}</Text>
+                      <View style={[styles.statusBadge, order.status === 'pending' ? styles.statusPending : styles.statusDelivered]}>
+                        <Text style={[styles.statusText, order.status === 'pending' ? styles.statusTextPending : styles.statusTextDelivered]}>
+                          {order.status === 'pending' ? 'Pending' : 'Delivered'}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.orderMetaRow}>
+                      <Text style={styles.orderMeta} numberOfLines={1}>{order.meta}</Text>
+                      {rating > 0 ? (
+                        <View style={styles.stars}>
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                              key={star}
+                              color={star <= rating ? C.amber400 : C.slate300}
+                              fill={star <= rating ? C.amber400 : 'transparent'}
+                              size={10}
+                            />
+                          ))}
+                        </View>
+                      ) : null}
                     </View>
                   </View>
-                  <View style={styles.orderMetaRow}>
-                    <Text style={styles.orderMeta} numberOfLines={1}>{order.meta}</Text>
-                    {order.status === 'delivered' ? (
-                      <View style={styles.stars}>
-                        {[1, 2, 3, 4, 5].map((star) => <Star key={star} color={C.amber400} fill={C.amber400} size={10} />)}
-                      </View>
-                    ) : null}
-                  </View>
                 </View>
-              </View>
-            </Pressable>
-          ))}
+              </Pressable>
+            )
+          }) : (
+            <Text style={styles.sectionSubtitle}>No orders yet. New orders will appear here.</Text>
+          )}
         </View>
       </View>
 
@@ -259,6 +267,7 @@ function formatCompactNaira(value: number) {
 
 const styles = StyleSheet.create({
   content: { gap: 24, paddingBottom: 112, paddingHorizontal: 20, paddingTop: 16 },
+  contentWithoutNav: { paddingBottom: 24 },
   pressed: { transform: [{ scale: 0.98 }] },
   overviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   primaryMetric: { backgroundColor: C.farm800, borderRadius: R['2xl'], overflow: 'hidden', padding: 20, position: 'relative', width: '100%', ...shadow.sm },

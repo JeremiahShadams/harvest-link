@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { ArrowLeft, ArrowRight, Check, Leaf } from 'lucide-react-native'
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
-import { supabase } from '@/lib/supabase'
-import { AREAS, normalizeNigerianPhone } from '@/lib/harvestlink/utils'
-import type { HarvestRole, Profile } from '@/lib/harvestlink/types'
+import { AREAS } from '@/lib/harvestlink/utils'
+import type { HarvestRole } from '@/lib/harvestlink/types'
+import { usePhoneAuth } from '@/lib/harvestlink/use-data'
 import { AppButton, Card, colors, Eyebrow, MessageBanner, TextField } from './ui'
 
 const roleOptions: { value: HarvestRole; title: string; detail: string }[] = [
@@ -11,14 +11,6 @@ const roleOptions: { value: HarvestRole; title: string; detail: string }[] = [
   { value: 'farmer', title: 'I grow produce', detail: 'List your harvest and track orders.' },
   { value: 'both', title: 'A little of both', detail: 'Shop and sell from one account.' },
 ]
-
-function explainAuthError(message: string) {
-  const value = message.toLowerCase()
-  if (value.includes('rate') || value.includes('too many')) return 'Too many code requests. Wait a little and try again.'
-  if (value.includes('phone_provider_disabled') || value.includes('phone auth')) return 'Phone sign-in is not enabled for this project yet. Ask your administrator to enable SMS sign-in.'
-  if (value.includes('invalid phone')) return 'Check the number and include the country code.'
-  return 'We couldn’t complete phone verification. Check the number or code and try again.'
-}
 
 export function PhoneAuthForm() {
   const [step, setStep] = useState<'details' | 'code'>('details')
@@ -28,66 +20,19 @@ export function PhoneAuthForm() {
   const [role, setRole] = useState<HarvestRole>('buyer')
   const [farmName, setFarmName] = useState('')
   const [area, setArea] = useState('Lekki')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
   const [sentTo, setSentTo] = useState('')
+  const { sendCode: requestCode, verifyCode: confirmCode, busy, error, setError } = usePhoneAuth()
 
   const sendCode = async () => {
-    setError('')
-    const normalizedPhone = normalizeNigerianPhone(phone)
-    if (name.trim().length < 2) return setError('Add your name so farmers know who they’re meeting.')
-    if (!/^\+\d{10,15}$/.test(normalizedPhone)) return setError('Enter a valid phone number, including your country code.')
-    setBusy(true)
-    try {
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: normalizedPhone,
-        options: {
-          shouldCreateUser: true,
-          data: { display_name: name.trim(), role, farm_name: farmName.trim() || null, default_area: area },
-        },
-      })
-      if (otpError) {
-        setError(explainAuthError(otpError.message))
-        return
-      }
-      setSentTo(normalizedPhone)
-      setPhone(normalizedPhone)
-      setStep('code')
-    } catch {
-      setError('We couldn’t send a code right now. Check your connection and try again.')
-    } finally {
-      setBusy(false)
-    }
+    const result = await requestCode({ phone, name, role, farmName, area })
+    if (!result.success) return
+    setSentTo(result.phone)
+    setPhone(result.phone)
+    setStep('code')
   }
 
   const verifyCode = async () => {
-    setError('')
-    if (!/^\d{6}$/.test(code.trim())) return setError('Enter the 6-digit code sent to your phone.')
-    setBusy(true)
-    try {
-      const { data, error: verifyError } = await supabase.auth.verifyOtp({ phone, token: code.trim(), type: 'sms' })
-      if (verifyError || !data.user) {
-        setError(explainAuthError(verifyError?.message ?? 'verification_failed'))
-        return
-      }
-      const profile: Profile = {
-        id: data.user.id,
-        display_name: name.trim() || String(data.user.user_metadata?.display_name ?? 'HarvestLink member'),
-        phone: data.user.phone ?? phone,
-        role,
-        default_area: area,
-        farm_name: farmName.trim() || null,
-      }
-      const { error: profileError } = await supabase.from('profiles').upsert(profile, { onConflict: 'id' })
-      if (profileError) {
-        setError('Your phone is verified, but we couldn’t finish your profile. Try again in a moment.')
-        return
-      }
-    } catch {
-      setError('We couldn’t complete phone verification. Please try again.')
-    } finally {
-      setBusy(false)
-    }
+    await confirmCode({ phone, token: code, name, role, farmName, area })
   }
 
   return (
@@ -131,7 +76,7 @@ export function PhoneAuthForm() {
         </>
       ) : (
         <>
-          <Pressable accessibilityRole="button" onPress={() => { setStep('details'); setCode(''); setError('') }} style={styles.backLink}>
+          <Pressable accessibilityRole="button" onPress={() => { setStep('details'); setCode(''); setError(null) }} style={styles.backLink}>
             <ArrowLeft color={colors.pine} size={16} /><Text style={styles.backText}>Change number</Text>
           </Pressable>
           <Eyebrow>CHECK YOUR MESSAGES</Eyebrow>

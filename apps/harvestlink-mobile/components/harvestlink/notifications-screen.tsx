@@ -1,39 +1,28 @@
-import { useState } from 'react'
 import { router } from 'expo-router'
 import { ArrowLeft, Bell, Check, CircleCheck, Leaf, PackageCheck } from 'lucide-react-native'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useHarvestLink } from './context'
 import { AppButton, Card, colors, EmptyState, Eyebrow, MessageBanner } from './ui'
-import { useNotifications } from '@/lib/harvestlink/use-data'
-import { supabase } from '@/lib/supabase'
+import {
+  useMarkAllNotificationsRead,
+  useMarkNotificationRead,
+  useNotifications,
+} from '@/lib/harvestlink/use-data'
 import { formatDate } from '@/lib/harvestlink/utils'
 
-export function NotificationsScreen() {
+export function NotificationsScreen({ embedded = false }: { embedded?: boolean }) {
   const { user } = useHarvestLink()
-  const { data: notifications, error, isLoading, mutate } = useNotifications(user?.id ?? null)
-  const [busy, setBusy] = useState(false)
+  const { data: notifications, error, isLoading } = useNotifications(user?.id ?? null)
+  const { markRead, busy: markReadBusy, error: markReadError } = useMarkNotificationRead()
+  const { markAllRead, busy: markAllBusy, error: markAllError } = useMarkAllNotificationsRead()
+  const busy = markReadBusy || markAllBusy
+  const actionError = markReadError ?? markAllError
 
-  const markRead = async (id: string) => {
-    if (!user) return
-    const { error: updateError } = await supabase.from('harvest_notifications').update({ read_at: new Date().toISOString() }).eq('id', id).eq('user_id', user.id).is('read_at', null)
-    if (!updateError) await mutate()
-  }
-
-  const markAllRead = async () => {
-    if (!user) return
-    setBusy(true)
-    const { error: updateError } = await supabase.from('harvest_notifications').update({ read_at: new Date().toISOString() }).eq('user_id', user.id).is('read_at', null)
-    setBusy(false)
-    if (updateError) return
-    await mutate()
-  }
-
-  return (
-    <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
+  const body = (
+    <>
         <View style={styles.topline}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.backButton}><ArrowLeft size={19} color={colors.ink} /></Pressable>
+          {embedded ? null : <Pressable accessibilityRole="button" accessibilityLabel="Back" onPress={() => router.back()} style={styles.backButton}><ArrowLeft size={19} color={colors.ink} /></Pressable>}
           <View style={styles.titleGroup}><Eyebrow>YOUR INBOX</Eyebrow><Text style={styles.title}>Updates</Text></View>
           <Pressable accessibilityRole="button" accessibilityLabel="Mark all notifications as read" onPress={() => void markAllRead()} disabled={busy || !notifications?.some((item) => !item.read_at)} style={styles.markAll}>
             <Check color={colors.pine} size={14} /><Text style={styles.markAllText}>Read all</Text>
@@ -41,12 +30,13 @@ export function NotificationsScreen() {
         </View>
         <Text style={styles.subtitle}>Order changes and freshness notes, all in one place.</Text>
         {error ? <MessageBanner>We couldn’t load your updates. Pull to refresh or try again shortly.</MessageBanner> : null}
+        {actionError ? <MessageBanner>{actionError}</MessageBanner> : null}
         {!user ? (
-          <EmptyState title="Your updates are personal." message="Sign in to see order changes and freshness reminders for your account." action={<AppButton label="Sign in with phone" onPress={() => router.push('/profile' as never)} />} />
+          <EmptyState title="Sign in to see your updates." message="Order progress and freshness reminders will be kept here for your account." action={<AppButton label="Sign in with phone" onPress={() => router.push('/profile' as never)} />} />
         ) : isLoading && !notifications ? (
           <Card style={styles.loading}><Text style={styles.subtitle}>Loading your updates…</Text></Card>
         ) : !notifications?.length ? (
-          <EmptyState title="You’re all caught up." message="We’ll add order updates and freshness notes here when they’re ready." action={<AppButton label="Browse the market" variant="secondary" onPress={() => router.push('/' as never)} />} />
+          <EmptyState title="Your next update will find you here." message="We’ll let you know when an order changes or a freshness scan needs your attention." action={<AppButton label="Browse the market" variant="secondary" onPress={() => router.push('/' as never)} />} />
         ) : (
           <View style={styles.list}>
             {notifications.map((item) => {
@@ -74,7 +64,14 @@ export function NotificationsScreen() {
             })}
           </View>
         )}
-      </ScrollView>
+    </>
+  )
+
+  if (embedded) return <View style={styles.content}>{body}</View>
+
+  return (
+    <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content}>{body}</ScrollView>
     </SafeAreaView>
   )
 }

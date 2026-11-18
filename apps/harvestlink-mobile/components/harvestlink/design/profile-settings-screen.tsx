@@ -11,7 +11,6 @@ import {
   LogOut,
   MapPin,
   Plus,
-  ShieldCheck,
   Smartphone,
   Trash,
 } from 'lucide-react-native'
@@ -29,8 +28,7 @@ import { useHarvestLink } from '../context'
 import { DesignScreen, DesignSelect, DesignToggle } from './ui'
 import { body, C, DESIGN_PROFILE_IMAGE, heading, R, shadow } from './tokens'
 import { loadDesignValue, saveDesignValue } from '@/lib/harvestlink/design-local'
-import { useUpdateProfile } from '@/lib/harvestlink/use-mutations'
-import { supabase } from '@/lib/supabase'
+import { useSignOut, useUpdateProfile } from '@/lib/harvestlink/use-data'
 
 type PushTiming = 'realtime' | 'hourly' | 'daily'
 
@@ -46,9 +44,9 @@ type ProfilePrefs = {
 }
 
 const DEFAULT_PREFS: ProfilePrefs = {
-  farmSize: '12.5',
-  gps: '6.6180° N, 3.5042° E',
-  crops: ['Tomatoes', 'Peppers (Rodo)', 'Leafy Greens'],
+  farmSize: '',
+  gps: '',
+  crops: [],
   orderNotifications: true,
   deliveryUpdates: true,
   priceAlerts: false,
@@ -64,14 +62,15 @@ const PUSH_OPTIONS: { value: PushTiming; label: string }[] = [
 
 const LANGUAGES = ['English', 'Français', 'Pidgin']
 
-export function ProfileSettingsScreen() {
+export function ProfileSettingsScreen({ showBottomNav = true }: { showBottomNav?: boolean }) {
   const insets = useSafeAreaInsets()
   const { user, profile } = useHarvestLink()
   const { updateProfile, busy } = useUpdateProfile()
+  const { signOut: performSignOut } = useSignOut()
 
-  const [fullName, setFullName] = useState('Adebayo Olawale')
-  const [phone, setPhone] = useState('+234 801 234 5678')
-  const [farmName, setFarmName] = useState('Green Acres Hub')
+  const [fullName, setFullName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [farmName, setFarmName] = useState('')
   const [syncedProfileId, setSyncedProfileId] = useState('')
   const [avatarUri, setAvatarUri] = useState(DESIGN_PROFILE_IMAGE)
   const [editingAccount, setEditingAccount] = useState(false)
@@ -83,9 +82,9 @@ export function ProfileSettingsScreen() {
 
   if (profile && profile.id !== syncedProfileId) {
     setSyncedProfileId(profile.id)
-    setFullName(profile.display_name || 'Adebayo Olawale')
-    setPhone(profile.phone || '+234 801 234 5678')
-    setFarmName(profile.farm_name || 'Green Acres Hub')
+    setFullName(profile.display_name || '')
+    setPhone(profile.phone || '')
+    setFarmName(profile.farm_name || '')
   }
 
   useEffect(() => {
@@ -182,7 +181,7 @@ export function ProfileSettingsScreen() {
   const signOut = () => {
     Alert.alert('Sign out of HarvestLink?', 'Your orders and farm activity will be waiting when you return.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => { void supabase.auth.signOut() } },
+      { text: 'Sign out', style: 'destructive', onPress: () => { void performSignOut() } },
     ])
   }
 
@@ -194,7 +193,7 @@ export function ProfileSettingsScreen() {
   }
 
   const displayName = shortDisplayName(fullName)
-  const email = user?.email || 'adebayo.farm@example.com'
+  const email = user?.email ?? ''
 
   return (
     <>
@@ -213,7 +212,7 @@ export function ProfileSettingsScreen() {
         </View>
       </View>
 
-      <DesignScreen activeTab="profile" contentStyle={styles.content}>
+      <DesignScreen activeTab="profile" showBottomNav={showBottomNav} contentStyle={[styles.content, !showBottomNav && styles.contentWithoutNav]}>
         <View style={styles.profileCard}>
           <View style={styles.profileBanner} />
           <View style={styles.avatarBlock}>
@@ -232,11 +231,7 @@ export function ProfileSettingsScreen() {
           <Text style={styles.profileName}>{displayName}</Text>
           <View style={styles.profileLocation}>
             <MapPin color={C.farm600} size={14} style={styles.profileLocationIcon} />
-            <Text style={styles.profileLocationText}>{profile?.default_area || 'Ikorodu Farm Hub, Lagos'}</Text>
-          </View>
-          <View style={styles.verifiedBadge}>
-            <ShieldCheck color={C.farm700} size={12} />
-            <Text style={styles.verifiedText}>Verified Farmer</Text>
+            <Text style={styles.profileLocationText}>{profile?.default_area || 'No area set'}</Text>
           </View>
         </View>
 
@@ -478,6 +473,7 @@ const styles = StyleSheet.create({
   pressedSmall: { transform: [{ scale: 0.95 }] },
   pressedRow: { backgroundColor: C.slate50 },
   content: { gap: 24, paddingBottom: 112, paddingHorizontal: 20, paddingTop: 24 },
+  contentWithoutNav: { paddingBottom: 24 },
   profileCard: { alignItems: 'center', backgroundColor: C.white, borderColor: C.slate100, borderRadius: R['3xl'], borderWidth: 1, overflow: 'hidden', paddingBottom: 24, paddingHorizontal: 24, paddingTop: 24, ...shadow.sm },
   profileBanner: { backgroundColor: C.farm800, height: 96, left: 0, position: 'absolute', right: 0, top: 0, width: '100%' },
   avatarBlock: { marginBottom: 12, marginTop: 32, position: 'relative' },

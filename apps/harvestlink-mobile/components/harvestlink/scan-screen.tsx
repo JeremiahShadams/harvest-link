@@ -4,31 +4,27 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as ImagePicker from 'expo-image-picker'
 import { Image } from 'expo-image'
 import { ArrowRight, Camera, Check, CircleHelp, ImagePlus, Leaf, RotateCcw, ScanLine, ShieldCheck, Sparkles } from 'lucide-react-native'
-import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
-import { useSWRConfig } from 'swr'
 import { AppHeader } from './app-header'
 import { AppButton, Card, colors, Eyebrow, MessageBanner, StatusBadge } from './ui'
 import { useHarvestLink } from './context'
-import { supabase, getApiBaseUrl } from '@/lib/supabase'
-import { useScans } from '@/lib/harvestlink/use-data'
+import { useAnalyzeScan, useScans } from '@/lib/harvestlink/use-data'
 import { formatDate } from '@/lib/harvestlink/utils'
 import type { ProduceScan, ShelfLifeResult } from '@/lib/harvestlink/types'
 
 type SelectedPhoto = { uri: string; file?: File; name: string; mimeType: string; fileSize?: number }
 
 export function ScanScreen() {
-  const { user, profile, setLatestScan } = useHarvestLink()
-  const { data: scans, mutate: mutateScans } = useScans(user?.id ?? null)
-  const { mutate } = useSWRConfig()
+  const { user, profile } = useHarvestLink()
+  const { data: scans } = useScans(user?.id ?? null)
+  const { analyze, busy, error, setError } = useAnalyzeScan()
   const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const cameraRef = useRef<CameraView | null>(null)
   const [cameraOpen, setCameraOpen] = useState(false)
   const [photo, setPhoto] = useState<SelectedPhoto | null>(null)
   const [cropHint, setCropHint] = useState('')
   const [result, setResult] = useState<ShelfLifeResult | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
 
   const openCamera = async () => {
     setError('')
@@ -77,55 +73,13 @@ export function ScanScreen() {
       router.push('/profile' as never)
       return
     }
-    const apiBase = getApiBaseUrl()
-    if (!apiBase) {
-      setError('Freshness analysis is not connected. Set the mobile app API URL and try again.')
+
+    const outcome = await analyze(photo, cropHint)
+    if (outcome.error === 'Sign in to scan.') {
+      router.push('/profile' as never)
       return
     }
-    setBusy(true)
-    setError('')
-    try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session?.access_token) {
-        router.push('/profile' as never)
-        return
-      }
-      const formData = new FormData()
-      formData.append('cropHint', cropHint.trim())
-      if (Platform.OS === 'web' && photo.file) {
-        formData.append('image', photo.file, photo.name)
-      } else if (Platform.OS === 'web') {
-        const response = await fetch(photo.uri)
-        const blob = await response.blob()
-        if (blob.size > 6 * 1024 * 1024) throw new Error('Choose a photo smaller than 6 MB for a quicker estimate.')
-        formData.append('image', blob, photo.name)
-      } else {
-        formData.append('image', { uri: photo.uri, name: photo.name, type: photo.mimeType } as unknown as Blob)
-      }
-      const response = await fetch(`${apiBase}/api/shelf-scan`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        body: formData,
-      })
-      const body = await response.json() as ShelfLifeResult | { error?: string }
-      if (!response.ok) throw new Error('error' in body && body.error ? body.error : 'This scan could not be completed.')
-      const scan = body as ShelfLifeResult
-      setResult(scan)
-      setLatestScan(scan)
-      const { error: saveError } = await supabase.from('produce_scans').insert({
-        user_id: user.id,
-        crop: scan.crop,
-        remaining_days: scan.remaining_days,
-        confidence: scan.confidence,
-        storage_tips: scan.storage_tips,
-      })
-      if (saveError) setError('Your estimate is ready, but it could not be added to your private scan history.')
-      await Promise.all([mutateScans(), mutate(['harvestlink-notifications', user.id])])
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'The scan could not be completed. Please try another photo.')
-    } finally {
-      setBusy(false)
-    }
+    if (outcome.scan) setResult(outcome.scan)
   }
 
   const startOver = () => { setPhoto(null); setResult(null); setError(''); setCameraOpen(false) }

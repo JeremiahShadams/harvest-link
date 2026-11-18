@@ -6,8 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppButton, Card, colors, Eyebrow, MessageBanner, TextField } from './ui'
 import { PhoneAuthForm } from './phone-auth-form'
 import { useHarvestLink } from './context'
-import { useUpdateProfile } from '@/lib/harvestlink/use-mutations'
-import { supabase } from '@/lib/supabase'
+import { useSignOut, useUpdateProfile } from '@/lib/harvestlink/use-data'
 import { AREAS } from '@/lib/harvestlink/utils'
 import type { HarvestRole } from '@/lib/harvestlink/types'
 
@@ -20,6 +19,7 @@ const roleOptions: { value: HarvestRole; label: string }[] = [
 export function ProfileScreen() {
   const { user, profile, authLoading, profileError, refreshProfile } = useHarvestLink()
   const { updateProfile, busy } = useUpdateProfile()
+  const { signOut: performSignOut } = useSignOut()
   const insets = useSafeAreaInsets()
   const [name, setName] = useState('')
   const [farmName, setFarmName] = useState('')
@@ -60,7 +60,7 @@ export function ProfileScreen() {
   const signOut = () => {
     Alert.alert('Sign out of HarvestLink?', 'Your orders and farm activity will be waiting when you return.', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => { void supabase.auth.signOut() } },
+      { text: 'Sign out', style: 'destructive', onPress: () => { void performSignOut() } },
     ])
   }
 
@@ -84,11 +84,11 @@ export function ProfileScreen() {
         </>
       ) : authLoading && !profile ? (
         <Card style={styles.loadingCard}><Text style={styles.subtitle}>Loading your profile…</Text></Card>
-      ) : !profile ? (
+      ) : profileError || !profile ? (
         <Card style={styles.loadingCard}>
-          <Text style={styles.title}>Finish setting up your profile.</Text>
-          <Text style={styles.subtitle}>{profileError ?? 'Your phone is verified. Your profile details are needed to continue.'}</Text>
-          <AppButton label="Retry profile load" onPress={() => void refreshProfile()} />
+          <Text style={styles.title}>Your profile isn&apos;t available right now.</Text>
+          <Text style={styles.subtitle}>We couldn&apos;t load your account details. Try again to reconnect to your profile.</Text>
+          <AppButton label="Try again" onPress={() => void refreshProfile()} />
         </Card>
       ) : (
         <>

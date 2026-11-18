@@ -39,6 +39,10 @@ export function formatDate(value: string) {
   }).format(new Date(value))
 }
 
+export function todayInLagos() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' })
+}
+
 export function nextOrderStatus(status: HarvestOrder['status']): HarvestOrder['status'] | null {
   const index = ORDER_FLOW.indexOf(status)
   return index < 0 || index === ORDER_FLOW.length - 1 ? null : ORDER_FLOW[index + 1]

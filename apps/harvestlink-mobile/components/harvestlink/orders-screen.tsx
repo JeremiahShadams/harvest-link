@@ -13,7 +13,7 @@ import { formatDate, formatNaira, formatQuantity, nextOrderStatus } from '@/lib/
 import { ORDER_STATUSES, STATUS_LABELS } from '@/lib/harvestlink/types'
 import type { HarvestOrder } from '@/lib/harvestlink/types'
 
-export function OrdersScreen() {
+export function OrdersScreen({ embedded = false }: { embedded?: boolean }) {
   const { user, profile } = useHarvestLink()
   const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
   const { advanceOrder } = useAdvanceOrder()
@@ -32,10 +32,9 @@ export function OrdersScreen() {
     }
   }
 
-  return (
-    <SafeAreaView edges={['top']} style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <AppHeader />
+  const body = (
+    <>
+        {embedded ? null : <AppHeader />}
         <View style={styles.heading}>
           <Eyebrow>THE JOURNEY FROM FARM TO TABLE</Eyebrow>
           <Text style={styles.title}>Orders, in one place.</Text>
@@ -60,7 +59,14 @@ export function OrdersScreen() {
           <EmptyState title={view === 'buyer' ? 'Your next good meal starts here.' : 'Your farm orders will show here.'} message={view === 'buyer' ? 'When you request a nearby harvest, we’ll keep its progress here.' : 'When a buyer requests your harvest, you can confirm and update its delivery here.'} action={<AppButton label={view === 'buyer' ? 'Browse fresh harvests' : 'Open farmer tools'} variant="secondary" icon={<ArrowRight color={colors.pine} size={15} />} onPress={() => router.push(view === 'buyer' ? '/' as never : '/farmer' as never)} />} />
         )}
         <Card style={styles.helpCard}><Clock3 color={colors.leaf} size={18} /><View style={styles.helpCopy}><Text style={styles.helpTitle}>What each update means</Text><Text style={styles.helpText}>Pending → Accepted → Ready → On the way → Delivered. Your farmer updates the order as it moves.</Text></View></Card>
-      </ScrollView>
+    </>
+  )
+
+  if (embedded) return <View style={styles.content}>{body}</View>
+
+  return (
+    <SafeAreaView edges={['top']} style={styles.safe}>
+      <ScrollView contentContainerStyle={styles.content}>{body}</ScrollView>
     </SafeAreaView>
   )
 }

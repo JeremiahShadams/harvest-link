@@ -5,5 +5,5 @@ import { ProfileScreen } from '@/components/harvestlink/profile-screen'
 export default function ProfileRoute() {
   const { profile } = useHarvestLink()
   const isFarmer = profile?.role === 'farmer' || profile?.role === 'both'
-  return isFarmer ? <ProfileSettingsScreen /> : <ProfileScreen />
+  return isFarmer ? <ProfileSettingsScreen showBottomNav={false} /> : <ProfileScreen />
 }

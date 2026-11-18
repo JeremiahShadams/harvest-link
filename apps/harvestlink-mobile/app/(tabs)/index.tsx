@@ -5,9 +5,9 @@ import { useHarvestLink } from '@/components/harvestlink/context'
 export default function MarketplaceRoute() {
   const { profile, authLoading } = useHarvestLink()
 
-  // A farmer-only account opens straight into the farm cockpit (see docs/design-implementation-plan.md).
+  // Farmer and both accounts open straight into the farm cockpit (see docs/design-implementation-plan.md).
   if (authLoading) return null
-  if (profile?.role === 'farmer') return <Redirect href="/farmer" />
+  if (profile?.role === 'farmer' || profile?.role === 'both') return <Redirect href="/farmer" />
 
   return <MarketplaceScreen />
 }

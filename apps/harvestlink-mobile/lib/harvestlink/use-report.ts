@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import { Alert, Platform, Share } from 'react-native'
 import { getApiBaseUrl, supabase } from '@/lib/supabase'
+import { RPCS, type CreateActivityReportResult } from './types'
 
 /**
  * Creates and shares the signed activity report link.
@@ -30,7 +31,7 @@ export function useActivityReport() {
   const create = useCallback(async () => {
     setBusy(true)
     setMessage('')
-    const { data, error } = await supabase.rpc('create_activity_report')
+    const { data, error } = await supabase.rpc(RPCS.createActivityReport)
     setBusy(false)
     if (error || !data) {
       setMessage(
@@ -40,7 +41,7 @@ export function useActivityReport() {
       )
       return
     }
-    const link = `${getApiBaseUrl()}/report/${data}`
+    const link = `${getApiBaseUrl()}/report/${data as CreateActivityReportResult}`
     setUrl(link)
     await share(link)
   }, [share])

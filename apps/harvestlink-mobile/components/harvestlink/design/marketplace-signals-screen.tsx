@@ -1,14 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import {
-  Award,
-  FileDown,
-  Info,
-  PackageCheck,
-  ShieldCheck,
-  Star,
-  Timer,
-  Zap,
-} from 'lucide-react-native'
+import { Award, FileDown, Info, PackageCheck } from 'lucide-react-native'
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useHarvestLink } from '../context'
 import { DesignHeader, DesignScreen, DesignSelect } from './ui'
@@ -25,10 +16,9 @@ const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: '90', label: 'Last 90 Days' },
 ]
 
-const SALES_BARS = [40, 60, 45, 80, 70, 100]
 const BAR_COLORS = [C.farm100, C.farm200, C.farm300, C.farm400, C.farm500, C.farm600]
 
-export function MarketplaceSignalsScreen() {
+export function MarketplaceSignalsScreen({ showBottomNav = true }: { showBottomNav?: boolean }) {
   const { user, profile } = useHarvestLink()
   const { data: listings } = useFarmerListings(user?.id ?? null)
   const { data: orders } = useOrders(user?.id ?? null)
@@ -51,20 +41,24 @@ export function MarketplaceSignalsScreen() {
     if (report.message) Alert.alert('Activity report', report.message)
   }, [report.message])
 
-  const score = signals?.activityScore ?? (user ? 0 : 92)
-  const deliveryRate = signals?.deliveryRate ?? (user ? 0 : 98)
-  const sales = signals?.salesValue ?? (user ? 0 : 450000)
-  const listingsCreated = signals?.listingsCreated ?? (user ? 0 : 14)
-  const ordersCompleted = signals?.ordersDelivered ?? (user ? 0 : 38)
-  const scansCompleted = signals?.scansCompleted ?? (user ? 0 : 22)
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'Adebayo'
-  const location = profile?.default_area || 'Ikorodu Farm Hub, Lagos'
+  const score = signals?.activityScore ?? 0
+  const deliveryRate = signals?.deliveryRate ?? 0
+  const consistency = signals?.consistency ?? 0
+  const sales = signals?.salesValue ?? 0
+  const listingsCreated = signals?.listingsCreated ?? 0
+  const ordersCompleted = signals?.ordersDelivered ?? 0
+  const scansCompleted = signals?.scansCompleted ?? 0
+  const weeklySales = signals?.weeklySales ?? []
+  const maxSales = weeklySales.reduce((max, week) => Math.max(max, week.value), 0)
+  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
+  const location = profile?.default_area || 'Add your area in your profile'
 
   return (
     <DesignScreen
       activeTab="signals"
+      showBottomNav={showBottomNav}
       header={<DesignHeader userName={userName} location={location} />}
-      contentStyle={styles.content}
+      contentStyle={[styles.content, !showBottomNav && styles.contentWithoutNav]}
     >
       <View style={styles.titleBlock}>
         <Text style={styles.pageTitle}>Marketplace Signals</Text>
@@ -95,31 +89,10 @@ export function MarketplaceSignalsScreen() {
           </View>
           <View style={styles.metricTile}>
             <View style={styles.metricLabelRow}>
-              <Timer color={C.slate400} size={16} />
-              <Text style={styles.metricLabel}>Response Time</Text>
+              <Info color={C.slate400} size={16} />
+              <Text style={styles.metricLabel}>Consistency</Text>
             </View>
-            <Text style={styles.metricValue}>{'< 2 hrs'}</Text>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.trustSection}>
-        <View style={styles.trustHeader}>
-          <Text style={styles.sectionTitle}>Trust Badges</Text>
-          <Info color={C.slate400} size={16} />
-        </View>
-        <View style={styles.badgeRow}>
-          <View style={[styles.badge, styles.badgeVerified]}>
-            <ShieldCheck color={C.farm600} size={18} />
-            <Text style={[styles.badgeText, styles.badgeTextVerified]}>Verified Seller</Text>
-          </View>
-          <View style={[styles.badge, styles.badgeFast]}>
-            <Zap color={C.amber500} size={18} />
-            <Text style={[styles.badgeText, styles.badgeTextFast]}>Fast Responder</Text>
-          </View>
-          <View style={[styles.badge, styles.badgeRating]}>
-            <Star color={C.blue500} size={18} />
-            <Text style={[styles.badgeText, styles.badgeTextRating]}>4.8 Avg Rating</Text>
+            <Text style={styles.metricValue}>{consistency}%</Text>
           </View>
         </View>
       </View>
@@ -143,12 +116,21 @@ export function MarketplaceSignalsScreen() {
             <Text style={styles.salesValue}>{formatNaira(sales)}</Text>
           </View>
           <View style={styles.barChart}>
-            {SALES_BARS.map((height, index) => (
+            {maxSales > 0 ? weeklySales.map((week, index) => (
               <View
-                key={`${height}-${index}`}
-                style={[styles.bar, { backgroundColor: BAR_COLORS[index], height: `${height}%` }]}
+                key={week.weekStart}
+                accessibilityLabel={`${week.label}: ${formatNaira(week.value)}`}
+                style={[
+                  styles.bar,
+                  {
+                    backgroundColor: BAR_COLORS[index % BAR_COLORS.length],
+                    height: `${Math.max(4, Math.round((week.value / maxSales) * 100))}%`,
+                  },
+                ]}
               />
-            ))}
+            )) : (
+              <Text style={styles.sectionSubtitle}>No delivered-order sales yet.</Text>
+            )}
           </View>
         </View>
 
@@ -189,6 +171,7 @@ export function MarketplaceSignalsScreen() {
 
 const styles = StyleSheet.create({
   content: { gap: 24, paddingBottom: 112, paddingHorizontal: 20, paddingTop: 16 },
+  contentWithoutNav: { paddingBottom: 24 },
   pressed: { transform: [{ scale: 0.98 }] },
   titleBlock: { marginBottom: 8 },
   pageTitle: heading({ color: C.slate900, fontSize: 24, fontWeight: '700' }),
@@ -209,6 +192,7 @@ const styles = StyleSheet.create({
   trustSection: { gap: 16 },
   trustHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   sectionTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
+  sectionSubtitle: body({ color: C.slate500, fontSize: 12, lineHeight: 18 }),
   badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   badge: { alignItems: 'center', borderRadius: R.xl, borderWidth: 1, flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
   badgeVerified: { backgroundColor: C.farm50, borderColor: C.farm100 },

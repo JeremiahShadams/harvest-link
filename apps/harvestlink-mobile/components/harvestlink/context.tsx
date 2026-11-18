@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { useSWRConfig } from 'swr'
 import type { Session, User } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
+import { fetchProfile } from '@/lib/harvestlink/use-data'
 import type { Profile, ShelfLifeResult } from '@/lib/harvestlink/types'
 
 type HarvestLinkContextValue = {
@@ -9,7 +10,7 @@ type HarvestLinkContextValue = {
   profile: Profile | null
   authLoading: boolean
   profileError: string | null
-  refreshProfile: () => Promise<Profile | null>
+  refreshProfile: (userId?: string) => Promise<Profile | null>
   latestScan: ShelfLifeResult | null
   setLatestScan: (scan: ShelfLifeResult | null) => void
 }
@@ -39,17 +40,15 @@ export function HarvestLinkProvider({ children }: PropsWithChildren) {
 
     setAuthLoading(true)
     void Promise.resolve().then(async () => {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id,display_name,phone,role,default_area,farm_name')
-        .eq('id', nextUser.id)
-        .maybeSingle()
-      if (!active() || requestId.current !== id) return
-      if (error) {
+      try {
+        const data = await fetchProfile(nextUser.id)
+        if (!active() || requestId.current !== id) return
+        setProfile(data)
+        setProfileError(null)
+      } catch {
+        if (!active() || requestId.current !== id) return
         setProfileError('Your profile could not be loaded. Check your connection and try again.')
         setProfile(null)
-      } else {
-        setProfile((data as Profile | null) ?? null)
       }
       setAuthLoading(false)
     })
@@ -99,21 +98,18 @@ export function HarvestLinkProvider({ children }: PropsWithChildren) {
     }
   }, [mutate, user])
 
-  const refreshProfile = useCallback(async () => {
-    if (!user) return null
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id,display_name,phone,role,default_area,farm_name')
-      .eq('id', user.id)
-      .maybeSingle()
-    if (error) {
+  const refreshProfile = useCallback(async (userId?: string) => {
+    const targetId = userId ?? user?.id
+    if (!targetId) return null
+    try {
+      const nextProfile = await fetchProfile(targetId)
+      setProfile(nextProfile)
+      setProfileError(null)
+      return nextProfile
+    } catch (error) {
       setProfileError('Your profile could not be loaded. Check your connection and try again.')
       throw error
     }
-    const nextProfile = (data as Profile | null) ?? null
-    setProfile(nextProfile)
-    setProfileError(null)
-    return nextProfile
   }, [user])
 
   return (

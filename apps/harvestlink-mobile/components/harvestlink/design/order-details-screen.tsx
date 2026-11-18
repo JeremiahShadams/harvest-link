@@ -1,9 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { router, useLocalSearchParams } from 'expo-router'
 import { Image } from 'expo-image'
-import { useSWRConfig } from 'swr'
 import {
-  AlertCircle,
   ArrowLeft,
   CalendarClock,
   CheckCircle2,
@@ -17,23 +15,18 @@ import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useHarvestLink } from '../context'
 import { DesignButton, DesignHeader, DesignScreen } from './ui'
-import { body, C, DESIGN_BUYER_IMAGE, heading, R, shadow } from './tokens'
+import { body, C, heading, R, shadow } from './tokens'
 import { useOrders } from '@/lib/harvestlink/use-data'
 import { useAdvanceOrder } from '@/lib/harvestlink/use-mutations'
-import { formatNaira, formatQuantity, nextOrderStatus } from '@/lib/harvestlink/utils'
+import { formatNaira, formatQuantity, getListingImageUrl, nextOrderStatus } from '@/lib/harvestlink/utils'
 import { STATUS_LABELS, type HarvestOrder } from '@/lib/harvestlink/types'
-import { shelfLifeRange } from '@/lib/harvestlink/signals'
-
-const DESIGN_LEAVES_IMAGE = 'https://images.unsplash.com/photo-1576045057995-568f588f82fb?q=80&w=150&auto=format&fit=crop'
 
 type DisplayItem = {
   id: string
   name: string
   amount: string
   meta: string
-  image: string
-  shelfLife: string
-  tone: 'green' | 'amber'
+  image: string | null
 }
 
 const TIMELINE = [
@@ -47,7 +40,7 @@ export function OrderDetailsScreen() {
   const params = useLocalSearchParams<{ id?: string | string[] }>()
   const routeId = Array.isArray(params.id) ? params.id[0] : params.id
   const { user, profile } = useHarvestLink()
-  const { data: orders } = useOrders(user?.id ?? null)
+  const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
   const { advanceOrder, busy } = useAdvanceOrder()
   const insets = useSafeAreaInsets()
 
@@ -56,58 +49,70 @@ export function OrderDetailsScreen() {
     [orders, routeId],
   )
 
-  const displayId = order ? shortId(order.id) : routeId ?? '1042'
-  const status = order?.status ?? 'pending'
+  const goBack = () => {
+    if (router.canGoBack()) router.back()
+    else router.navigate('/orders' as never)
+  }
+
+  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
+  const location = profile?.default_area ?? ''
+  const header = <DesignHeader userName={userName} location={location} />
+
+  if (isLoading && !order) {
+    return (
+      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
+        <View style={styles.messageCard}>
+          <Text style={styles.messageTitle}>Loading this order…</Text>
+        </View>
+      </DesignScreen>
+    )
+  }
+
+  if (error && !order) {
+    return (
+      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
+        <View style={styles.messageCard}>
+          <Text style={styles.messageTitle}>We couldn’t load this order.</Text>
+          <Text style={styles.messageBody}>Check your connection and try again from your orders list.</Text>
+          <DesignButton label="Back to Orders" onPress={goBack} variant="secondary" style={styles.messageCta} />
+        </View>
+      </DesignScreen>
+    )
+  }
+
+  if (!order) {
+    return (
+      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
+        <View style={styles.messageCard}>
+          <Text style={styles.messageTitle}>This order isn’t available.</Text>
+          <Text style={styles.messageBody}>It may have been removed, or it isn’t part of your account. Return to your orders and choose another one.</Text>
+          <DesignButton label="Back to Orders" onPress={goBack} style={styles.messageButton} />
+        </View>
+      </DesignScreen>
+    )
+  }
+
+  const displayId = shortId(order.id)
+  const status = order.status
   const statusIndex = statusIndexFor(status)
-  const isFallback = !order
-
-  const items: DisplayItem[] = order
-    ? [{
-        id: order.id,
-        name: order.listing?.crop ?? 'Fresh produce',
-        amount: formatNaira(Number(order.quantity_kg) * Number(order.unit_price_per_kg)),
-        meta: `${formatQuantity(order.quantity_kg)} Baskets • ${formatNaira(order.unit_price_per_kg)}/basket`,
-        image: order.listing?.image_url?.startsWith('http') ? order.listing.image_url : DESIGN_ORDER_PRODUCE_IMAGE,
-        shelfLife: shelfLifeLabel(order),
-        tone: shelfLifeTone(order),
-      }]
-    : [
-        {
-          id: 'design-rodo',
-          name: 'Fresh Rodo (Pepper)',
-          amount: '₦45,000',
-          meta: '5 Baskets • ₦9,000/basket',
-          image: DESIGN_ORDER_PRODUCE_IMAGE,
-          shelfLife: 'EST. SHELF LIFE: 6-8 DAYS',
-          tone: 'green',
-        },
-        {
-          id: 'design-ugu',
-          name: 'Ugu Leaves (Sack)',
-          amount: '₦12,000',
-          meta: '2 Sacks • ₦6,000/sack',
-          image: DESIGN_LEAVES_IMAGE,
-          shelfLife: 'EST. SHELF LIFE: 2-3 DAYS',
-          tone: 'amber',
-        },
-      ]
-
-  const subtotal = order
-    ? Number(order.quantity_kg) * Number(order.unit_price_per_kg)
-    : 57000
-  const deliveryFee = 3500
-  const total = subtotal + deliveryFee
-  const buyerName = isFallback ? 'Chioma Ndubuisi' : 'Buyer'
-  const buyerArea = isFallback ? 'Lekki Phase 1, Lagos' : order?.delivery_area || 'Lagos'
-  const placedAt = order ? `Placed ${formatDateTime(order.created_at)}` : 'Placed today, 10:24 AM'
-  const address = isFallback ? '14 Admiralty Way, Lekki Phase 1' : order?.delivery_area || 'Lekki Phase 1, Lagos'
-  const window = isFallback ? 'Tomorrow (15 Nov)' : order?.delivery_window || 'Tomorrow (15 Nov)'
-  const windowDetail = isFallback ? 'Morning (8:00 AM - 11:00 AM)' : 'Delivery window selected by the buyer'
   const nextStatus = nextOrderStatus(status)
 
+  const items: DisplayItem[] = [{
+    id: order.id,
+    name: order.listing?.crop ?? 'Produce details unavailable',
+    amount: formatNaira(Number(order.quantity_kg) * Number(order.unit_price_per_kg)),
+    meta: `${formatQuantity(order.quantity_kg)} kg • ${formatNaira(order.unit_price_per_kg)}/kg`,
+    image: getListingImageUrl({ image_url: order.listing?.image_url ?? '' }),
+  }]
+
+  const subtotal = Number(order.quantity_kg) * Number(order.unit_price_per_kg)
+  const placedAt = `Placed ${formatDateTime(order.created_at)}`
+  const deliveryArea = order.delivery_area || 'Not provided'
+  const deliveryWindow = order.delivery_window || 'Not provided'
+
   const acceptOrder = async () => {
-    if (!user || !order) {
-      Alert.alert('Order not available', 'This order is not in your live orders yet.')
+    if (!user) {
+      Alert.alert('Sign in required', 'Sign in before updating an order.')
       return
     }
     if (!nextStatus) {
@@ -129,18 +134,18 @@ export function OrderDetailsScreen() {
     )
   }
 
-  const goBack = () => {
-    if (router.canGoBack()) router.back()
-    else router.navigate('/orders' as never)
-  }
-
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'Adebayo'
-  const location = profile?.default_area || 'Ikorodu Farm Hub, Lagos'
+  const actionLabel = !nextStatus
+    ? 'Order complete'
+    : busy
+      ? 'Updating…'
+      : status === 'pending'
+        ? 'Accept Order'
+        : `Mark ${STATUS_LABELS[nextStatus]}`
 
   return (
     <DesignScreen
       activeTab="orders"
-      header={<DesignHeader userName={userName} location={location} />}
+      header={header}
       contentStyle={styles.content}
     >
       <Pressable accessibilityRole="button" accessibilityLabel="Back to Orders" onPress={goBack} style={styles.backRow}>
@@ -164,14 +169,14 @@ export function OrderDetailsScreen() {
       <View style={styles.buyerCard}>
         <View style={styles.buyerRow}>
           <View style={styles.buyerIdentity}>
-            <View style={styles.buyerImageWrap}>
-              <Image source={{ uri: DESIGN_BUYER_IMAGE }} style={styles.buyerImage} contentFit="cover" />
+            <View style={styles.buyerInitial}>
+              <Text style={styles.buyerInitialText}>{shortId(order.buyer_id).slice(0, 1)}</Text>
             </View>
             <View>
-              <Text style={styles.buyerName}>{buyerName}</Text>
+              <Text style={styles.buyerName}>Buyer {shortId(order.buyer_id)}</Text>
               <View style={styles.buyerLocationRow}>
                 <MapPin color={C.slate500} size={11} />
-                <Text style={styles.buyerLocation}>{buyerArea}</Text>
+                <Text style={styles.buyerLocation}>{deliveryArea}</Text>
               </View>
             </View>
           </View>
@@ -222,7 +227,11 @@ export function OrderDetailsScreen() {
           {items.map((item, index) => (
             <View key={item.id} style={[styles.itemRow, index < items.length - 1 && styles.itemRowBorder]}>
               <View style={styles.itemImageWrap}>
-                <Image source={{ uri: item.image }} style={styles.itemImage} contentFit="cover" />
+                {item.image ? (
+                  <Image source={{ uri: item.image }} style={styles.itemImage} contentFit="cover" />
+                ) : (
+                  <View style={styles.itemImagePlaceholder}><ScanLine color={C.slate400} size={22} /></View>
+                )}
               </View>
               <View style={styles.itemCopy}>
                 <View style={styles.itemTitleRow}>
@@ -230,21 +239,14 @@ export function OrderDetailsScreen() {
                   <Text style={styles.itemAmount}>{item.amount}</Text>
                 </View>
                 <Text style={styles.itemMeta}>{item.meta}</Text>
-                <View style={[styles.shelfBadge, item.tone === 'amber' ? styles.shelfAmber : styles.shelfGreen]}>
-                  {item.tone === 'amber'
-                    ? <AlertCircle color={C.amber700} size={11} />
-                    : <ScanLineIcon />}
-                  <Text style={[styles.shelfText, item.tone === 'amber' ? styles.shelfTextAmber : styles.shelfTextGreen]}>{item.shelfLife}</Text>
-                </View>
               </View>
             </View>
           ))}
         </View>
         <View style={styles.totals}>
           <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalValue}>{formatNaira(subtotal)}</Text></View>
-          <View style={styles.totalRow}><Text style={styles.totalLabel}>Delivery Fee</Text><Text style={styles.totalValue}>{formatNaira(deliveryFee)}</Text></View>
           <View style={styles.totalDivider} />
-          <View style={styles.totalRow}><Text style={styles.totalEarningsLabel}>Total Earnings</Text><Text style={styles.totalEarnings}>{formatNaira(total)}</Text></View>
+          <View style={styles.totalRow}><Text style={styles.totalEarningsLabel}>Order total</Text><Text style={styles.totalEarnings}>{formatNaira(subtotal)}</Text></View>
         </View>
       </View>
 
@@ -254,17 +256,16 @@ export function OrderDetailsScreen() {
           <View style={styles.deliveryRow}>
             <View style={styles.deliveryIconWrap}><Map color={C.slate500} size={16} /></View>
             <View>
-              <Text style={styles.deliveryLabel}>Delivery Address</Text>
-              <Text style={styles.deliveryValue}>{address}</Text>
-              <Text style={styles.deliverySubValue}>Lagos, Nigeria</Text>
+              <Text style={styles.deliveryLabel}>Delivery Area</Text>
+              <Text style={styles.deliveryValue}>{deliveryArea}</Text>
             </View>
           </View>
           <View style={styles.deliveryRow}>
             <View style={styles.deliveryIconWrap}><CalendarClock color={C.slate500} size={16} /></View>
             <View>
               <Text style={styles.deliveryLabel}>Preferred Window</Text>
-              <Text style={styles.deliveryValue}>{window}</Text>
-              <Text style={styles.deliverySubValue}>{windowDetail}</Text>
+              <Text style={styles.deliveryValue}>{deliveryWindow}</Text>
+              {order.notes ? <Text style={styles.deliverySubValue}>{order.notes}</Text> : null}
             </View>
           </View>
         </View>
@@ -273,22 +274,16 @@ export function OrderDetailsScreen() {
       <View style={[styles.actionBar, { bottom: Math.max(34, insets.bottom) + 56 }]}>
         <DesignButton label="Decline" onPress={declineOrder} variant="secondary" style={styles.declineButton} />
         <DesignButton
-          label={busy ? 'Updating…' : isFallback || status === 'pending' ? 'Accept Order' : `Mark ${STATUS_LABELS[nextStatus ?? status]}`}
+          label={actionLabel}
           loading={busy}
+          disabled={!nextStatus}
           onPress={() => void acceptOrder()}
-          icon={<CheckCircle2 color={C.white} size={18} />}
+          icon={nextStatus ? <CheckCircle2 color={C.white} size={18} /> : undefined}
           style={styles.acceptButton}
         />
       </View>
     </DesignScreen>
   )
-}
-
-const DESIGN_ORDER_PRODUCE_IMAGE =
-  'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?q=80&w=150&auto=format&fit=crop'
-
-function ScanLineIcon() {
-  return <ScanLine color={C.farm700} size={11} />
 }
 
 function shortId(value: string) {
@@ -313,23 +308,13 @@ function formatDateTime(value: string) {
   }).format(date)
 }
 
-function shelfLifeDays(order: HarvestOrder) {
-  const crop = order.listing?.crop?.toLowerCase() ?? ''
-  return /(ugu|leaf|leaves|spinach|lettuce|salad)/.test(crop) ? 3 : 7
-}
-
-function shelfLifeLabel(order: HarvestOrder) {
-  const range = shelfLifeRange(shelfLifeDays(order))
-  return `EST. SHELF LIFE: ${range.label.replace('–', '-').replace(' days', '').toUpperCase()} DAYS`
-}
-
-function shelfLifeTone(order: HarvestOrder) {
-  return shelfLifeRange(shelfLifeDays(order)).tone === 'green' ? 'green' : 'amber'
-}
-
 const styles = StyleSheet.create({
   content: { gap: 20, paddingBottom: 180, paddingHorizontal: 20, paddingTop: 16 },
   pressed: { transform: [{ scale: 0.98 }] },
+  messageCard: { alignItems: 'flex-start', backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, gap: 10, padding: 20, ...shadow.sm },
+  messageTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
+  messageBody: body({ color: C.slate500, fontSize: 13, lineHeight: 20 }),
+  messageCta: { alignSelf: 'stretch', marginTop: 4 },
   backRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   backText: body({ color: C.slate500, fontSize: 14, fontWeight: '500' }),
   orderHeading: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
@@ -344,8 +329,8 @@ const styles = StyleSheet.create({
   buyerCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, padding: 16, ...shadow.sm },
   buyerRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   buyerIdentity: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-  buyerImageWrap: { backgroundColor: C.slate100, borderRadius: R.pill, height: 40, overflow: 'hidden', width: 40 },
-  buyerImage: { height: '100%', width: '100%' },
+  buyerInitial: { alignItems: 'center', backgroundColor: C.farm50, borderRadius: R.pill, height: 40, justifyContent: 'center', width: 40 },
+  buyerInitialText: heading({ color: C.farm700, fontSize: 16, fontWeight: '700' }),
   buyerName: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
   buyerLocationRow: { alignItems: 'center', flexDirection: 'row', gap: 4, marginTop: 2 },
   buyerLocation: body({ color: C.slate500, fontSize: 11 }),
@@ -375,17 +360,12 @@ const styles = StyleSheet.create({
   itemRowBorder: { borderBottomColor: C.slate50, borderBottomWidth: 1 },
   itemImageWrap: { backgroundColor: C.slate100, borderRadius: R.xl, height: 64, overflow: 'hidden', width: 64 },
   itemImage: { height: '100%', width: '100%' },
+  itemImagePlaceholder: { alignItems: 'center', height: '100%', justifyContent: 'center', width: '100%' },
   itemCopy: { flex: 1, paddingVertical: 2 },
   itemTitleRow: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', paddingRight: 8 },
   itemTitle: body({ color: C.slate900, flex: 1, fontSize: 14, fontWeight: '700' }),
   itemAmount: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
   itemMeta: body({ color: C.slate500, fontSize: 12, marginTop: 2 }),
-  shelfBadge: { alignItems: 'center', alignSelf: 'flex-start', borderRadius: R.lg, borderWidth: 1, flexDirection: 'row', gap: 4, marginTop: 8, paddingHorizontal: 8, paddingVertical: 4 },
-  shelfGreen: { backgroundColor: C.farm50, borderColor: C.farm100 },
-  shelfAmber: { backgroundColor: C.amber50, borderColor: C.amber100 },
-  shelfText: body({ fontSize: 10, fontWeight: '600', letterSpacing: 0.25 }),
-  shelfTextGreen: { color: C.farm700 },
-  shelfTextAmber: { color: C.amber700 },
   totals: { backgroundColor: C.slate50, borderBottomLeftRadius: R.xl, borderBottomRightRadius: R.xl, borderTopColor: C.slate100, borderTopWidth: 1, gap: 8, padding: 16 },
   totalRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   totalLabel: body({ color: C.slate500, fontSize: 14 }),
@@ -400,7 +380,7 @@ const styles = StyleSheet.create({
   deliveryIconWrap: { alignItems: 'center', backgroundColor: C.slate50, borderRadius: R.pill, height: 32, justifyContent: 'center', width: 32 },
   deliveryLabel: body({ color: C.slate500, fontSize: 11, fontWeight: '500', letterSpacing: 0.55, marginBottom: 2, textTransform: 'uppercase' }),
   deliveryValue: body({ color: C.slate900, fontSize: 14, fontWeight: '500' }),
-  deliverySubValue: body({ color: C.slate500, fontSize: 12 }),
+  deliverySubValue: body({ color: C.slate500, fontSize: 12, marginTop: 2 }),
   actionBar: { backgroundColor: C.white, borderTopColor: C.slate100, borderTopWidth: 1, flexDirection: 'row', gap: 12, left: 0, paddingHorizontal: 20, paddingVertical: 16, position: 'absolute', right: 0, zIndex: 30, ...shadow.actionBar },
   declineButton: { elevation: 0, flex: 1, height: 48, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0 },
   acceptButton: { flex: 2, height: 48 },

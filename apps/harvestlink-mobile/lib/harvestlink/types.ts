@@ -75,8 +75,27 @@ export type ShelfLifeResult = {
   disclaimer: string
 }
 
+export const PROFILE_COLUMNS = 'id,display_name,phone,role,default_area,farm_name'
+
 export const LISTING_COLUMNS =
   'id,farmer_id,farmer_name,farm_name,crop,category,price_per_kg,available_kg,harvested_on,estimated_shelf_life_days,scan_confidence,image_url,area,status,is_demo,created_at'
+
+export const LISTING_SUMMARY_COLUMNS = 'id,crop,farm_name,image_url,category'
+
+export const ORDER_COLUMNS =
+  'id,listing_id,buyer_id,farmer_id,quantity_kg,unit_price_per_kg,status,delivery_window,delivery_area,notes,rating,rating_note,created_at'
+
+export const SCAN_COLUMNS = 'id,user_id,crop,remaining_days,confidence,storage_tips,created_at'
+
+export const NOTIFICATION_COLUMNS =
+  'id,user_id,kind,title,message,order_id,listing_id,created_at,read_at'
+
+export const RPCS = {
+  placeOrder: 'place_order',
+  advanceOrderStatus: 'advance_order_status',
+  rateDeliveredOrder: 'rate_delivered_order',
+  createActivityReport: 'create_activity_report',
+} as const
 
 export const ORDER_STATUSES: HarvestOrder['status'][] = [
   'pending',
@@ -112,4 +131,7 @@ export type RateDeliveredOrderParams = {
   p_rating: number
   p_note: string
 }
+
+/** The activity-report RPC returns the signed report token, not a full URL. */
+export type CreateActivityReportResult = string
 

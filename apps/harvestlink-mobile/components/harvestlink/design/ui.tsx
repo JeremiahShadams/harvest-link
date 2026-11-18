@@ -35,11 +35,13 @@ export function DesignScreen({
   header,
   contentStyle,
   activeTab,
+  showBottomNav = true,
 }: {
   children: ReactNode
   header?: ReactNode
   contentStyle?: StyleProp<ViewStyle>
   activeTab: DesignTab
+  showBottomNav?: boolean
 }) {
   return (
     <View style={styles.root}>
@@ -51,8 +53,35 @@ export function DesignScreen({
       >
         {children}
       </ScrollView>
-      <DesignBottomNavigation active={activeTab} />
+      {showBottomNav ? <DesignBottomNavigation active={activeTab} /> : null}
     </View>
+  )
+}
+
+export function FarmerTab({
+  activeTab,
+  children,
+  contentStyle,
+  showBottomNav = true,
+}: {
+  activeTab: DesignTab
+  children: ReactNode
+  contentStyle?: StyleProp<ViewStyle>
+  showBottomNav?: boolean
+}) {
+  const { profile } = useHarvestLink()
+  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
+  const location = profile?.default_area || 'Add your area in your profile'
+
+  return (
+    <DesignScreen
+      activeTab={activeTab}
+      showBottomNav={showBottomNav}
+      header={<DesignHeader userName={userName} location={location} />}
+      contentStyle={[showBottomNav ? styles.farmerTabContent : styles.farmerTabContentWithoutNav, contentStyle]}
+    >
+      {children}
+    </DesignScreen>
   )
 }
 
@@ -94,7 +123,7 @@ export function DesignHeader({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={unread ? `Notifications, ${unread} unread` : 'Notifications'}
-          onPress={() => router.push('/notifications' as never)}
+          onPress={() => router.navigate('/chats' as never)}
           style={({ pressed }) => [styles.bellButton, pressed && styles.pressed]}
         >
           <Bell color={C.slate600} size={20} />
@@ -279,6 +308,8 @@ export function DesignButton({
 const styles = StyleSheet.create({
   root: { backgroundColor: C.slate50, flex: 1 },
   content: { flexGrow: 1, width: '100%' },
+  farmerTabContent: { paddingBottom: 112, paddingTop: 8 },
+  farmerTabContentWithoutNav: { paddingBottom: 24, paddingTop: 8 },
   pressed: { transform: [{ scale: 0.95 }] },
   header: {
     backgroundColor: C.white80,

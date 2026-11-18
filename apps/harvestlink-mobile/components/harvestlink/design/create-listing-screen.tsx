@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { router } from 'expo-router'
 import { Image } from 'expo-image'
 import * as ImagePicker from 'expo-image-picker'
-import { useSWRConfig } from 'swr'
 import {
   ArrowLeft,
   ArrowRight,
@@ -27,9 +26,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { useHarvestLink } from '../context'
 import { DesignButton, DesignScreen, DesignSelect } from './ui'
-import { body, C, DESIGN_PRODUCE_IMAGE, heading, R, shadow } from './tokens'
+import { body, C, heading, R, shadow } from './tokens'
 import { useCreateListing } from '@/lib/harvestlink/use-mutations'
-import { saveDesignValue } from '@/lib/harvestlink/design-local'
+import { loadDesignValue, saveDesignValue } from '@/lib/harvestlink/design-local'
+import { getListingImageUrl } from '@/lib/harvestlink/utils'
 
 type Category = 'Peppers' | 'Tomatoes' | 'Leafy Greens' | 'Maize'
 
@@ -45,6 +45,19 @@ const UNIT_OPTIONS = [
 
 type Unit = (typeof UNIT_OPTIONS)[number]
 
+type ListingDraft = {
+  crop: string
+  category: Category
+  photos: Photo[]
+  quantity: string
+  unit: Unit
+  price: string
+  shelfDays: string
+  harvestDate: string
+  description: string
+  savedAt?: string
+}
+
 const CATEGORIES: { label: string; value: Category }[] = [
   { label: '🌶️ Peppers', value: 'Peppers' },
   { label: '🍅 Tomatoes', value: 'Tomatoes' },
@@ -54,17 +67,40 @@ const CATEGORIES: { label: string; value: Category }[] = [
 
 export function CreateListingScreen() {
   const insets = useSafeAreaInsets()
-  const { user, profile } = useHarvestLink()
+  const { user, profile, latestScan } = useHarvestLink()
   const { createListing, busy } = useCreateListing()
-  const [crop, setCrop] = useState('Rodo (Scotch Bonnet Pepper)')
+  const [cropOverride, setCropOverride] = useState<string | null>(null)
   const [category, setCategory] = useState<Category>('Peppers')
-  const [photos, setPhotos] = useState<Photo[]>([{ id: 'design-pepper-photo', uri: DESIGN_PRODUCE_IMAGE }])
-  const [quantity, setQuantity] = useState('5')
+  const [photos, setPhotos] = useState<Photo[]>([])
+  const [quantity, setQuantity] = useState('')
   const [unit, setUnit] = useState<Unit>('Baskets (Big)')
-  const [price, setPrice] = useState('12500')
+  const [price, setPrice] = useState('')
+  const [shelfDaysOverride, setShelfDaysOverride] = useState<string | null>(null)
   const [harvestDate, setHarvestDate] = useState('')
   const [description, setDescription] = useState('')
   const [savingDraft, setSavingDraft] = useState(false)
+
+  const crop = cropOverride ?? latestScan?.crop ?? ''
+  const shelfDays = shelfDaysOverride ?? (latestScan ? String(latestScan.remaining_days) : '')
+
+  useEffect(() => {
+    let active = true
+    void loadDesignValue<ListingDraft | null>('listing-draft', null).then((saved) => {
+      if (!active || !saved) return
+      if (typeof saved.crop === 'string') setCropOverride(saved.crop)
+      if (CATEGORIES.some((option) => option.value === saved.category)) setCategory(saved.category)
+      if (Array.isArray(saved.photos)) {
+        setPhotos(saved.photos.filter((photo) => typeof photo?.uri === 'string' && typeof photo?.id === 'string'))
+      }
+      if (typeof saved.quantity === 'string') setQuantity(saved.quantity)
+      if (UNIT_OPTIONS.some((option) => option === saved.unit)) setUnit(saved.unit)
+      if (typeof saved.price === 'string') setPrice(saved.price)
+      if (typeof saved.shelfDays === 'string') setShelfDaysOverride(saved.shelfDays)
+      if (typeof saved.harvestDate === 'string') setHarvestDate(saved.harvestDate)
+      if (typeof saved.description === 'string') setDescription(saved.description)
+    })
+    return () => { active = false }
+  }, [])
 
   const goBack = () => {
     if (router.canGoBack()) router.back()
@@ -73,10 +109,10 @@ export function CreateListingScreen() {
 
   const selectCategory = (next: Category) => {
     setCategory(next)
-    if (next === 'Tomatoes') setCrop('Tomatoes')
-    if (next === 'Leafy Greens') setCrop('Leafy Greens')
-    if (next === 'Maize') setCrop('Maize')
-    if (next === 'Peppers') setCrop('Rodo (Scotch Bonnet Pepper)')
+    if (next === 'Tomatoes') setCropOverride('Tomatoes')
+    if (next === 'Leafy Greens') setCropOverride('Leafy Greens')
+    if (next === 'Maize') setCropOverride('Maize')
+    if (next === 'Peppers') setCropOverride('Rodo (Scotch Bonnet Pepper)')
   }
 
   const addPhoto = async () => {
@@ -87,6 +123,7 @@ export function CreateListingScreen() {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ['images'],
       allowsEditing: false,
+      allowsMultipleSelection: true,
       quality: 0.8,
       selectionLimit: 4 - photos.length,
     })
@@ -104,6 +141,7 @@ export function CreateListingScreen() {
       quantity,
       unit,
       price,
+      shelfDays,
       harvestDate,
       description,
       savedAt: new Date().toISOString(),
@@ -113,11 +151,13 @@ export function CreateListingScreen() {
   }
 
   const validate = () => {
-    if (!crop.trim()) return 'Add the produce you are listing.'
+    if (crop.trim().length < 2) return 'Add the produce you are listing.'
     const numericQuantity = Number(quantity)
     const numericPrice = Number(price)
+    const numericShelfDays = Number(shelfDays)
     if (!Number.isFinite(numericQuantity) || numericQuantity <= 0) return 'Add a quantity greater than zero.'
     if (!Number.isFinite(numericPrice) || numericPrice <= 0) return 'Add a unit price greater than zero.'
+    if (!Number.isInteger(numericShelfDays) || numericShelfDays < 1 || numericShelfDays > 60) return 'Add an estimated shelf life between 1 and 60 days.'
     if (harvestDate && Number.isNaN(new Date(harvestDate).getTime())) return 'Use a valid harvest date.'
     return ''
   }
@@ -134,15 +174,19 @@ export function CreateListingScreen() {
     }
     const numericQuantity = Number(quantity)
     const numericPrice = Number(price)
+    const trimmedCrop = crop.trim()
+    const matchingScan = latestScan?.crop.trim().toLowerCase() === trimmedCrop.toLowerCase() ? latestScan : null
+    const imageUrl = getListingImageUrl({ image_url: photos[0]?.uri ?? '' })
     const result = await createListing({
-      crop: crop.trim(),
+      crop: trimmedCrop,
       category,
       pricePerKg: numericPrice,
       availableKg: numericQuantity,
-      harvestedOn: harvestDate || new Date().toISOString().slice(0, 10),
-      estimatedShelfLifeDays: 0,
-      imageUrl: photos[0]?.uri || DESIGN_PRODUCE_IMAGE,
-      area: profile.default_area || 'Ikorodu Farm Hub, Lagos',
+      harvestedOn: harvestDate || undefined,
+      estimatedShelfLifeDays: Number(shelfDays),
+      scanConfidence: matchingScan?.confidence ?? null,
+      ...(imageUrl ? { imageUrl } : {}),
+      area: profile.default_area || undefined,
     })
     if (!result.success) {
       Alert.alert('Listing not published', result.error ?? 'Check the details and try again.')
@@ -182,7 +226,7 @@ export function CreateListingScreen() {
             <Search color={C.slate400} size={16} style={styles.searchIcon} />
             <TextInput
               accessibilityLabel="Produce name"
-              onChangeText={setCrop}
+              onChangeText={setCropOverride}
               placeholder="e.g. Tomatoes, Peppers, Maize"
               placeholderTextColor={C.slate400}
               style={styles.searchInput}
@@ -277,6 +321,20 @@ export function CreateListingScreen() {
                 value={price}
               />
             </View>
+          </View>
+
+          <View>
+            <Text style={styles.detailLabel}>Estimated Shelf Life (days)</Text>
+            <TextInput
+              accessibilityLabel="Estimated shelf life in days"
+              keyboardType="number-pad"
+              onChangeText={setShelfDaysOverride}
+              placeholder="1-60"
+              placeholderTextColor={C.slate400}
+              style={styles.quantityInputFull}
+              value={shelfDays}
+            />
+            <Text style={styles.dateHint}>Use the result from a freshness scan when you have one.</Text>
           </View>
 
           <View>
@@ -418,6 +476,7 @@ const styles = StyleSheet.create({
   detailLabel: body({ color: C.slate500, fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }),
   quantityRow: { flexDirection: 'row', gap: 12 },
   quantityInput: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingHorizontal: 16, width: 96 }),
+  quantityInputFull: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingHorizontal: 16, width: '100%' }),
   unitWrap: { flex: 1, position: 'relative' },
   unitSelect: { backgroundColor: C.slate50, borderRadius: R.xl, minHeight: 48, paddingRight: 40 },
   unitText: body({ color: C.slate900, fontSize: 14, fontWeight: '500' }),
