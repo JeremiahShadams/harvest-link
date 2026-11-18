@@ -1,7 +1,8 @@
 {
-  "name": "my-project",
+  "name": "harvest-link",
   "version": "0.1.0",
   "private": true,
+  "description": "Local produce marketplace for farmers and buyers — Next.js web app and Expo mobile app sharing a Supabase backend.",
   "packageManager": "pnpm@12.3.4",
   "scripts": {
     "dev": "next dev",
