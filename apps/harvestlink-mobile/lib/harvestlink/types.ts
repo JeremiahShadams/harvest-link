@@ -93,3 +93,23 @@ export const STATUS_LABELS: Record<HarvestOrder['status'], string> = {
   out_for_delivery: 'On the way',
   delivered: 'Delivered',
 }
+
+export type PlaceOrderParams = {
+  p_listing_id: string
+  p_quantity_kg: number
+  p_delivery_window: string
+  p_delivery_area: string
+  p_notes: string
+}
+
+export type AdvanceOrderStatusParams = {
+  p_order_id: string
+  p_next_status: HarvestOrder['status']
+}
+
+export type RateDeliveredOrderParams = {
+  p_order_id: string
+  p_rating: number
+  p_note: string
+}
+

@@ -28,7 +28,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
 import { useHarvestLink } from '../context'
 import { DesignButton, DesignScreen, DesignSelect } from './ui'
 import { body, C, DESIGN_PRODUCE_IMAGE, heading, R, shadow } from './tokens'
-import { supabase } from '@/lib/supabase'
+import { useCreateListing } from '@/lib/harvestlink/use-mutations'
 import { saveDesignValue } from '@/lib/harvestlink/design-local'
 
 type Category = 'Peppers' | 'Tomatoes' | 'Leafy Greens' | 'Maize'
@@ -55,7 +55,7 @@ const CATEGORIES: { label: string; value: Category }[] = [
 export function CreateListingScreen() {
   const insets = useSafeAreaInsets()
   const { user, profile } = useHarvestLink()
-  const { mutate } = useSWRConfig()
+  const { createListing, busy } = useCreateListing()
   const [crop, setCrop] = useState('Rodo (Scotch Bonnet Pepper)')
   const [category, setCategory] = useState<Category>('Peppers')
   const [photos, setPhotos] = useState<Photo[]>([{ id: 'design-pepper-photo', uri: DESIGN_PRODUCE_IMAGE }])
@@ -64,7 +64,6 @@ export function CreateListingScreen() {
   const [price, setPrice] = useState('12500')
   const [harvestDate, setHarvestDate] = useState('')
   const [description, setDescription] = useState('')
-  const [busy, setBusy] = useState(false)
   const [savingDraft, setSavingDraft] = useState(false)
 
   const goBack = () => {
@@ -133,34 +132,22 @@ export function CreateListingScreen() {
       Alert.alert('Sign in required', 'Sign in with your farmer profile before publishing a listing.')
       return
     }
-    setBusy(true)
     const numericQuantity = Number(quantity)
     const numericPrice = Number(price)
-    const { error } = await supabase.from('listings').insert({
-      farmer_id: user.id,
-      farmer_name: profile.display_name,
-      farm_name: profile.farm_name || 'Independent farm',
+    const result = await createListing({
       crop: crop.trim(),
       category,
-      price_per_kg: numericPrice,
-      available_kg: numericQuantity,
-      harvested_on: harvestDate || new Date().toISOString().slice(0, 10),
-      estimated_shelf_life_days: 0,
-      scan_confidence: null,
-      image_url: DESIGN_PRODUCE_IMAGE,
+      pricePerKg: numericPrice,
+      availableKg: numericQuantity,
+      harvestedOn: harvestDate || new Date().toISOString().slice(0, 10),
+      estimatedShelfLifeDays: 0,
+      imageUrl: photos[0]?.uri || DESIGN_PRODUCE_IMAGE,
       area: profile.default_area || 'Ikorodu Farm Hub, Lagos',
-      status: 'active',
-      is_demo: false,
     })
-    setBusy(false)
-    if (error) {
-      Alert.alert('Listing not published', 'Check the details and try again.')
+    if (!result.success) {
+      Alert.alert('Listing not published', result.error ?? 'Check the details and try again.')
       return
     }
-    await Promise.all([
-      mutate('harvestlink-listings'),
-      mutate(['harvestlink-farmer-listings', user.id]),
-    ])
     Alert.alert('Listing published', 'Your produce is now visible to nearby buyers.')
     goBack()
   }

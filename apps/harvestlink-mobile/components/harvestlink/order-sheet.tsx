@@ -2,21 +2,18 @@ import { useState } from 'react'
 import { router } from 'expo-router'
 import { ArrowRight, Minus, Plus, X } from 'lucide-react-native'
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
-import { useSWRConfig } from 'swr'
 import type { Listing } from '@/lib/harvestlink/types'
 import { DELIVERY_WINDOWS, formatNaira, formatQuantity } from '@/lib/harvestlink/utils'
-import { supabase } from '@/lib/supabase'
+import { usePlaceOrder } from '@/lib/harvestlink/use-mutations'
 import { useHarvestLink } from './context'
 import { AppButton, colors, Eyebrow, MessageBanner } from './ui'
 
 export function OrderSheet({ listing, onClose }: { listing: Listing | null; onClose: () => void }) {
   const { user, profile } = useHarvestLink()
-  const { mutate } = useSWRConfig()
+  const { placeOrder, busy, error, setError } = usePlaceOrder()
   const [quantity, setQuantity] = useState(1)
   const [deliveryWindow, setDeliveryWindow] = useState(DELIVERY_WINDOWS[0])
   const [notes, setNotes] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
 
   if (!listing) return null
   const price = Number(listing.price_per_kg) || 0
@@ -25,7 +22,7 @@ export function OrderSheet({ listing, onClose }: { listing: Listing | null; onCl
 
   const changeQuantity = (next: number) => {
     setQuantity(Math.max(0.5, Math.min(max || 0.5, Number(next.toFixed(1)))))
-    setError('')
+    setError(null)
   }
 
   const submitOrder = async () => {
@@ -42,33 +39,19 @@ export function OrderSheet({ listing, onClose }: { listing: Listing | null; onCl
       setError('Choose a valid quantity that is still available.')
       return
     }
-    setBusy(true)
-    setError('')
-    const { error: orderError } = await supabase.rpc('place_order', {
-      p_listing_id: listing.id,
-      p_quantity_kg: quantity,
-      p_delivery_window: deliveryWindow,
-      p_delivery_area: profile.default_area,
-      p_notes: notes.trim(),
+    const result = await placeOrder({
+      listingId: listing.id,
+      farmerId: listing.farmer_id,
+      quantityKg: quantity,
+      deliveryWindow,
+      deliveryArea: profile.default_area,
+      notes,
     })
-    setBusy(false)
-    if (orderError) {
-      const message = orderError.message.toLowerCase()
-      setError(message.includes('insufficient_stock')
-        ? 'That harvest quantity changed. Choose a little less and try again.'
-        : message.includes('listing_unavailable')
-          ? 'This harvest has just been picked up. Choose another listing.'
-          : 'We couldn’t place that order. Check your connection and try again.')
-      return
-    }
-    await Promise.all([
-      mutate(['harvestlink-orders', user.id]),
-      mutate(['harvestlink-notifications', user.id]),
-      mutate('harvestlink-listings'),
-    ])
+    if (!result.success) return
     onClose()
     Alert.alert('Order sent to the farm', 'The farmer will confirm your harvest soon. You can follow every step in Orders.')
   }
+
 
   return (
     <Modal animationType="slide" transparent visible onRequestClose={onClose}>

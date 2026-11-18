@@ -59,3 +59,21 @@ export function getListingCategory(listing: Pick<Listing, 'category' | 'crop'>) 
 export function getListingImageUrl(listing: Pick<Listing, 'image_url'>) {
   return /^https?:\/\//i.test(listing.image_url) ? listing.image_url : null
 }
+
+export function imageForCrop(crop: string): string {
+  const value = crop.toLowerCase()
+  if (value.includes('tomato')) return '/images/tomatoes.png'
+  if (value.includes('pepper')) return '/images/peppers.png'
+  if (value.includes('plantain') || value.includes('fruit') || value.includes('maize')) return '/images/plantain.png'
+  return '/images/greens.png'
+}
+
+export function categoryForCrop(crop: string): string {
+  if (crop === 'Tomatoes') return 'Tomatoes'
+  if (crop === 'Peppers') return 'Peppers'
+  if (crop === 'Leafy greens') return 'Leafy greens'
+  if (crop === 'Maize') return 'Other'
+  if (crop === 'Plantain') return 'Fruits'
+  return 'Other'
+}
+

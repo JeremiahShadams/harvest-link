@@ -19,10 +19,10 @@ import { useHarvestLink } from '../context'
 import { DesignButton, DesignHeader, DesignScreen } from './ui'
 import { body, C, DESIGN_BUYER_IMAGE, heading, R, shadow } from './tokens'
 import { useOrders } from '@/lib/harvestlink/use-data'
+import { useAdvanceOrder } from '@/lib/harvestlink/use-mutations'
 import { formatNaira, formatQuantity, nextOrderStatus } from '@/lib/harvestlink/utils'
 import { STATUS_LABELS, type HarvestOrder } from '@/lib/harvestlink/types'
 import { shelfLifeRange } from '@/lib/harvestlink/signals'
-import { supabase } from '@/lib/supabase'
 
 const DESIGN_LEAVES_IMAGE = 'https://images.unsplash.com/photo-1576045057995-568f588f82fb?q=80&w=150&auto=format&fit=crop'
 
@@ -48,9 +48,8 @@ export function OrderDetailsScreen() {
   const routeId = Array.isArray(params.id) ? params.id[0] : params.id
   const { user, profile } = useHarvestLink()
   const { data: orders } = useOrders(user?.id ?? null)
-  const { mutate } = useSWRConfig()
+  const { advanceOrder, busy } = useAdvanceOrder()
   const insets = useSafeAreaInsets()
-  const [busy, setBusy] = useState(false)
 
   const order = useMemo(
     () => (orders ?? []).find((candidate) => candidate.id === routeId) ?? null,
@@ -115,20 +114,11 @@ export function OrderDetailsScreen() {
       Alert.alert('Order already complete', 'This order has reached its final status.')
       return
     }
-    setBusy(true)
-    const { error } = await supabase.rpc('advance_order_status', {
-      p_order_id: order.id,
-      p_next_status: nextStatus,
-    })
-    setBusy(false)
-    if (error) {
-      Alert.alert('Order not updated', 'We couldn’t save that status change. Refresh and try again.')
+    const result = await advanceOrder(order.id, nextStatus)
+    if (!result.success) {
+      Alert.alert('Order not updated', result.error ?? 'We couldn’t save that status change. Refresh and try again.')
       return
     }
-    await Promise.all([
-      mutate(['harvestlink-orders', user.id]),
-      mutate(['harvestlink-notifications', user.id]),
-    ])
     Alert.alert('Order updated', `Status is now ${STATUS_LABELS[nextStatus].toLowerCase()}.`)
   }
 

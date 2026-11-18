@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppButton, Card, colors, Eyebrow, MessageBanner, TextField } from './ui'
 import { PhoneAuthForm } from './phone-auth-form'
 import { useHarvestLink } from './context'
+import { useUpdateProfile } from '@/lib/harvestlink/use-mutations'
 import { supabase } from '@/lib/supabase'
 import { AREAS } from '@/lib/harvestlink/utils'
 import type { HarvestRole } from '@/lib/harvestlink/types'
@@ -18,13 +19,13 @@ const roleOptions: { value: HarvestRole; label: string }[] = [
 
 export function ProfileScreen() {
   const { user, profile, authLoading, profileError, refreshProfile } = useHarvestLink()
+  const { updateProfile, busy } = useUpdateProfile()
   const insets = useSafeAreaInsets()
   const [name, setName] = useState('')
   const [farmName, setFarmName] = useState('')
   const [role, setRole] = useState<HarvestRole>('buyer')
   const [area, setArea] = useState('Lekki')
   const [syncedProfileId, setSyncedProfileId] = useState('')
-  const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
 
   // Reset the form when a different profile signs in (React's "adjust state during render" pattern).
@@ -42,20 +43,17 @@ export function ProfileScreen() {
       setMessage('Add a name with at least two characters.')
       return
     }
-    setBusy(true)
     setMessage('')
-    const { error } = await supabase.from('profiles').update({
-      display_name: name.trim(),
-      farm_name: farmName.trim() || null,
+    const result = await updateProfile({
+      displayName: name.trim(),
+      farmName: farmName.trim() || null,
       role,
-      default_area: area,
-    }).eq('id', user.id)
-    setBusy(false)
-    if (error) {
-      setMessage('Your profile could not be saved. Check your connection and try again.')
+      defaultArea: area,
+    })
+    if (!result.success) {
+      setMessage(result.error ?? 'Your profile could not be saved. Check your connection and try again.')
       return
     }
-    await refreshProfile()
     setMessage('Your profile and area are saved.')
   }
 

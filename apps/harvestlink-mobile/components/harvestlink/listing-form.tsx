@@ -1,40 +1,20 @@
 import { useState } from 'react'
 import { ArrowRight, Check, X } from 'lucide-react-native'
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { useSWRConfig } from 'swr'
 import { useHarvestLink } from './context'
 import { AppButton, colors, Eyebrow, MessageBanner, TextField } from './ui'
-import { CROPS, AREAS } from '@/lib/harvestlink/utils'
-import { supabase } from '@/lib/supabase'
+import { CROPS, AREAS, categoryForCrop, imageForCrop } from '@/lib/harvestlink/utils'
+import { useCreateListing } from '@/lib/harvestlink/use-mutations'
 import type { ShelfLifeResult } from '@/lib/harvestlink/types'
-
-const imageForCrop = (crop: string) => {
-  const value = crop.toLowerCase()
-  if (value.includes('tomato')) return '/images/tomatoes.png'
-  if (value.includes('pepper')) return '/images/peppers.png'
-  if (value.includes('plantain') || value.includes('fruit') || value.includes('maize')) return '/images/plantain.png'
-  return '/images/greens.png'
-}
-
-function categoryForCrop(crop: string) {
-  if (crop === 'Tomatoes') return 'Tomatoes'
-  if (crop === 'Peppers') return 'Peppers'
-  if (crop === 'Leafy greens') return 'Leafy greens'
-  if (crop === 'Maize') return 'Other'
-  if (crop === 'Plantain') return 'Fruits'
-  return 'Other'
-}
 
 export function ListingForm({ visible, latestScan, onClose }: { visible: boolean; latestScan: ShelfLifeResult | null; onClose: () => void }) {
   const { user, profile } = useHarvestLink()
-  const { mutate } = useSWRConfig()
+  const { createListing, busy, error, setError } = useCreateListing()
   const [crop, setCrop] = useState('Tomatoes')
   const [price, setPrice] = useState('')
   const [quantity, setQuantity] = useState('')
   const [shelfDays, setShelfDays] = useState('4')
   const [area, setArea] = useState(profile?.default_area ?? 'Lekki')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
   const matchingScan = latestScan?.crop.toLowerCase().includes(crop.toLowerCase()) || crop.toLowerCase().includes(latestScan?.crop.toLowerCase() ?? '') ? latestScan : null
 
   const publish = async () => {
@@ -49,29 +29,17 @@ export function ListingForm({ visible, latestScan, onClose }: { visible: boolean
       setError('Add a crop, a price, a quantity, and a shelf-life estimate to continue.')
       return
     }
-    setBusy(true)
-    setError('')
-    const { error: insertError } = await supabase.from('listings').insert({
-      farmer_id: user.id,
-      farmer_name: profile.display_name,
-      farm_name: profile.farm_name || 'Independent farm',
+    const result = await createListing({
       crop: crop.trim(),
       category: categoryForCrop(crop),
-      price_per_kg: numericPrice,
-      available_kg: numericQuantity,
-      harvested_on: new Date().toISOString().slice(0, 10),
-      estimated_shelf_life_days: numericDays,
-      scan_confidence: matchingScan?.confidence ?? null,
-      image_url: imageForCrop(crop),
+      pricePerKg: numericPrice,
+      availableKg: numericQuantity,
+      estimatedShelfLifeDays: numericDays,
+      scanConfidence: matchingScan?.confidence ?? null,
+      imageUrl: imageForCrop(crop),
       area,
-      is_demo: false,
     })
-    setBusy(false)
-    if (insertError) {
-      setError('This harvest could not be published. Check the details and try again.')
-      return
-    }
-    await Promise.all([mutate('harvestlink-listings'), mutate(['harvestlink-farmer-listings', user.id])])
+    if (!result.success) return
     onClose()
     Alert.alert('Your harvest is listed', 'Buyers nearby can now discover it in the market.')
   }

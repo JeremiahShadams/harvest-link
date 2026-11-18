@@ -29,6 +29,7 @@ import { useHarvestLink } from '../context'
 import { DesignScreen, DesignSelect, DesignToggle } from './ui'
 import { body, C, DESIGN_PROFILE_IMAGE, heading, R, shadow } from './tokens'
 import { loadDesignValue, saveDesignValue } from '@/lib/harvestlink/design-local'
+import { useUpdateProfile } from '@/lib/harvestlink/use-mutations'
 import { supabase } from '@/lib/supabase'
 
 type PushTiming = 'realtime' | 'hourly' | 'daily'
@@ -65,7 +66,8 @@ const LANGUAGES = ['English', 'Français', 'Pidgin']
 
 export function ProfileSettingsScreen() {
   const insets = useSafeAreaInsets()
-  const { user, profile, refreshProfile } = useHarvestLink()
+  const { user, profile } = useHarvestLink()
+  const { updateProfile, busy } = useUpdateProfile()
 
   const [fullName, setFullName] = useState('Adebayo Olawale')
   const [phone, setPhone] = useState('+234 801 234 5678')
@@ -74,7 +76,6 @@ export function ProfileSettingsScreen() {
   const [avatarUri, setAvatarUri] = useState(DESIGN_PROFILE_IMAGE)
   const [editingAccount, setEditingAccount] = useState(false)
   const [editingFarm, setEditingFarm] = useState(false)
-  const [busy, setBusy] = useState(false)
   const [prefs, setPrefs] = useState<ProfilePrefs>(DEFAULT_PREFS)
   const [prefsLoaded, setPrefsLoaded] = useState(false)
   const [modal, setModal] = useState<'crop' | 'language' | null>(null)
@@ -140,17 +141,14 @@ export function ProfileSettingsScreen() {
       Alert.alert('Profile not connected', 'Sign in before saving account changes.')
       return
     }
-    setBusy(true)
-    const { error } = await supabase
-      .from('profiles')
-      .update({ display_name: fullName.trim(), phone: phone.trim() || null })
-      .eq('id', user.id)
-    setBusy(false)
-    if (error) {
-      Alert.alert('Profile not saved', 'Check your connection and try again.')
+    const result = await updateProfile({
+      displayName: fullName.trim(),
+      phone: phone.trim() || null,
+    })
+    if (!result.success) {
+      Alert.alert('Profile not saved', result.error ?? 'Check your connection and try again.')
       return
     }
-    await refreshProfile()
     setEditingAccount(false)
     Alert.alert('Profile updated', 'Your account information is saved.')
   }
@@ -161,17 +159,13 @@ export function ProfileSettingsScreen() {
       return
     }
     if (user && profile) {
-      setBusy(true)
-      const { error } = await supabase
-        .from('profiles')
-        .update({ farm_name: farmName.trim() || null })
-        .eq('id', user.id)
-      setBusy(false)
-      if (error) {
-        Alert.alert('Farm details not saved', 'Check your connection and try again.')
+      const result = await updateProfile({
+        farmName: farmName.trim() || null,
+      })
+      if (!result.success) {
+        Alert.alert('Farm details not saved', result.error ?? 'Check your connection and try again.')
         return
       }
-      await refreshProfile()
     }
     setEditingFarm(false)
     Alert.alert('Farm details saved', 'Your farm size, GPS, and crops are saved on this device.')

@@ -8,14 +8,15 @@ import { AppHeader } from './app-header'
 import { AppButton, Card, colors, EmptyState, Eyebrow, MessageBanner, StatusBadge } from './ui'
 import { useHarvestLink } from './context'
 import { useOrders } from '@/lib/harvestlink/use-data'
+import { useAdvanceOrder, useRateOrder } from '@/lib/harvestlink/use-mutations'
 import { formatDate, formatNaira, formatQuantity, nextOrderStatus } from '@/lib/harvestlink/utils'
 import { ORDER_STATUSES, STATUS_LABELS } from '@/lib/harvestlink/types'
 import type { HarvestOrder } from '@/lib/harvestlink/types'
-import { supabase } from '@/lib/supabase'
 
 export function OrdersScreen() {
   const { user, profile } = useHarvestLink()
   const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
+  const { advanceOrder } = useAdvanceOrder()
   const [manualView, setManualView] = useState<'buyer' | 'farmer' | null>(null)
   const view = manualView ?? (profile?.role === 'farmer' ? 'farmer' : 'buyer')
   const { mutate } = useSWRConfig()
@@ -24,12 +25,11 @@ export function OrdersScreen() {
   const updateStatus = async (order: HarvestOrder) => {
     const next = nextOrderStatus(order.status)
     if (!user || !next) return
-    const { error: updateError } = await supabase.rpc('advance_order_status', { p_order_id: order.id, p_next_status: next })
-    if (updateError) {
-      Alert.alert('Order not updated', 'We couldn’t save that status change. Refresh your orders and try again.')
+    const result = await advanceOrder(order.id, next)
+    if (!result.success) {
+      Alert.alert('Order not updated', result.error ?? 'We couldn’t save that status change. Refresh your orders and try again.')
       return
     }
-    await Promise.all([mutate(['harvestlink-orders', user.id]), mutate(['harvestlink-notifications', user.id])])
   }
 
   return (
@@ -67,20 +67,18 @@ export function OrdersScreen() {
 
 function OrderCard({ order, mode, onAdvance, onRefresh }: { order: HarvestOrder; mode: 'buyer' | 'farmer'; onAdvance: () => void; onRefresh: () => void }) {
   const { user } = useHarvestLink()
+  const { rateOrder, busy } = useRateOrder()
   const [rating, setRating] = useState(order.rating ?? 0)
   const [note, setNote] = useState('')
-  const [busy, setBusy] = useState(false)
   const index = ORDER_STATUSES.indexOf(order.status)
   const total = Number(order.quantity_kg) * Number(order.unit_price_per_kg)
   const isFarmerOrder = mode === 'farmer' && order.farmer_id === user?.id
 
   const saveRating = async () => {
     if (!user || rating < 1) return
-    setBusy(true)
-    const { error } = await supabase.rpc('rate_delivered_order', { p_order_id: order.id, p_rating: rating, p_note: note.trim() })
-    setBusy(false)
-    if (error) {
-      Alert.alert('Rating not saved', 'We couldn’t save your feedback. Please try again.')
+    const result = await rateOrder(order.id, rating, note.trim())
+    if (!result.success) {
+      Alert.alert('Rating not saved', result.error ?? 'We couldn’t save your feedback. Please try again.')
       return
     }
     Alert.alert('Thank you for sharing', 'Your feedback helps farmers keep improving their harvests.')
