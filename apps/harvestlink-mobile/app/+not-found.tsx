@@ -1,40 +1,41 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
-
-import { Text, View } from '@/components/Themed';
+import { router, Stack } from 'expo-router'
+import { StyleSheet, Text, View } from 'react-native'
+import { AppButton, colors, fonts } from '@/components/harvestlink/ui'
 
 export default function NotFoundScreen() {
   return (
     <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
+      <Stack.Screen options={{ title: 'Screen not found' }} />
       <View style={styles.container}>
-        <Text style={styles.title}>This screen does not exist.</Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
-        </Link>
+        <Text style={styles.title}>This screen isn’t here.</Text>
+        <Text style={styles.subtitle}>Let’s take you back to the HarvestLink market.</Text>
+        <AppButton label="Back to HarvestLink" onPress={() => router.replace('/' as never)} />
       </View>
     </>
-  );
+  )
 }
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     alignItems: 'center',
+    backgroundColor: colors.cream,
+    flex: 1,
+    gap: 12,
     justifyContent: 'center',
-    padding: 20,
+    padding: 24,
   },
   title: {
-    fontSize: 20,
-    fontWeight: 'bold',
+    color: colors.ink,
+    fontFamily: fonts.heading,
+    fontSize: 22,
+    textAlign: 'center',
   },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
+  subtitle: {
+    color: colors.muted,
+    fontFamily: fonts.body,
     fontSize: 14,
-    color: '#2e78b7',
+    lineHeight: 20,
+    marginBottom: 8,
+    textAlign: 'center',
   },
-});
+})
