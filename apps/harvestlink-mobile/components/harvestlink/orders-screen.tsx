@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { router } from 'expo-router'
 import { ArrowRight, Check, Clock3, MapPin, MessageCircle, PackageCheck, Phone, Star } from 'lucide-react-native'
 import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useSWRConfig } from 'swr'
 import { AppHeader } from './app-header'
 import {
@@ -32,6 +32,7 @@ import type { HarvestOrder } from '@/lib/harvestlink/types'
 import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
 
 export function OrdersScreen({ embedded = false }: { embedded?: boolean }) {
+  const insets = useSafeAreaInsets()
   const { user, profile, activeSpace, t } = useHarvestLink()
   const { data: orders, error, isLoading, isValidating, mutate: mutateOrders } = useOrders(user?.id ?? null)
   const { advanceOrder } = useAdvanceOrder()
@@ -169,7 +170,7 @@ export function OrdersScreen({ embedded = false }: { embedded?: boolean }) {
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: 104 + Math.max(14, insets.bottom) }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
