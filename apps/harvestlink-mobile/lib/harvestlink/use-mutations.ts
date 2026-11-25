@@ -1,19 +1,32 @@
 import { useCallback, useState } from 'react'
+import { File as LocalExpoFile } from 'expo-file-system'
 import { Platform } from 'react-native'
 import { useSWRConfig } from 'swr'
 import { getApiBaseUrl, supabase } from '@/lib/supabase'
 import { useHarvestLink } from '@/components/harvestlink/context'
+import { triggerErrorHaptic, triggerSuccessHaptic } from './haptics'
 import {
   PROFILE_COLUMNS,
   RPCS,
+  STORAGE_BUCKETS,
   type HarvestOrder,
   type HarvestRole,
+  type Listing,
   type Profile,
   type ShelfLifeResult,
 } from './types'
-import { categoryForCrop, imageForCrop, normalizeNigerianPhone, todayInLagos } from './utils'
+import {
+  categoryForCrop,
+  imageForCrop,
+  isLocalFileUri,
+  normalizeNigerianPhone,
+  normalizeUnit,
+  todayInLagos,
+} from './utils'
 
 export { useActivityReport } from './use-report'
+
+const MAX_PHOTO_BYTES = 6 * 1024 * 1024
 
 export function friendlyOrderError(message: string): string {
   const text = message.toLowerCase()
@@ -33,6 +46,68 @@ export function explainAuthError(message: string): string {
     return 'Phone sign-in is not enabled for this project yet. Ask your project administrator to enable SMS sign-in.'
   }
   return 'We couldn’t complete phone verification. Check the number or code and try again.'
+}
+
+async function readLocalPhotoBytes(uri: string): Promise<{ bytes: Uint8Array; contentType: string; ext: string }> {
+  const lower = uri.toLowerCase()
+  const ext = lower.endsWith('.png') ? 'png' : lower.endsWith('.webp') ? 'webp' : 'jpg'
+  const contentType = ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg'
+
+  if (Platform.OS === 'web') {
+    const response = await fetch(uri)
+    const buffer = await response.arrayBuffer()
+    return { bytes: new Uint8Array(buffer), contentType, ext }
+  }
+
+  try {
+    const file = new LocalExpoFile(uri)
+    const bytes = await file.bytes()
+    return { bytes, contentType, ext }
+  } catch {
+    const response = await fetch(uri)
+    const buffer = await response.arrayBuffer()
+    return { bytes: new Uint8Array(buffer), contentType, ext }
+  }
+}
+
+/**
+ * Uploads a selected local produce photo to Supabase Storage.
+ * Never swallows errors or silently falls back to a stock image.
+ */
+export async function uploadListingPhoto(uri: string, userId: string): Promise<string> {
+  if (!isLocalFileUri(uri) && /^https?:\/\//i.test(uri)) {
+    return uri
+  }
+
+  const { bytes, contentType, ext } = await readLocalPhotoBytes(uri)
+  if (!bytes || bytes.byteLength === 0) {
+    throw new Error('Could not read the selected photo from this device.')
+  }
+  if (bytes.byteLength > MAX_PHOTO_BYTES) {
+    throw new Error('Selected photo exceeds 6 MB. Choose a smaller photo and try again.')
+  }
+
+  const randomSuffix = Math.random().toString(36).slice(2, 8)
+  const objectPath = `${userId}/${Date.now()}-${randomSuffix}.${ext}`
+
+  const { error: uploadError } = await supabase.storage
+    .from(STORAGE_BUCKETS.listingPhotos)
+    .upload(objectPath, bytes, {
+      contentType,
+      upsert: false,
+    })
+
+  if (uploadError) {
+    throw new Error(
+      `Photo upload failed (${uploadError.message}). Your listing was not published—never falling back to a fake image.`,
+    )
+  }
+
+  const { data } = supabase.storage.from(STORAGE_BUCKETS.listingPhotos).getPublicUrl(objectPath)
+  if (!data?.publicUrl) {
+    throw new Error('Photo uploaded, but no public image URL was returned.')
+  }
+  return data.publicUrl
 }
 
 export type PlaceOrderInput = {
@@ -55,17 +130,20 @@ export function usePlaceOrder() {
       if (!user) {
         const msg = 'Sign in to place an order.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
       const role = profile?.role
       if (role !== 'buyer' && role !== 'both') {
         const msg = 'Choose Buyer or Both in your profile before placing an order.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
       if (!Number.isFinite(input.quantityKg) || input.quantityKg <= 0) {
         const msg = 'Choose a valid quantity that is available from this farm.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
@@ -86,9 +164,11 @@ export function usePlaceOrder() {
       if (rpcError) {
         const friendly = friendlyOrderError(rpcError.message)
         setError(friendly)
+        triggerErrorHaptic()
         return { error: friendly, success: false }
       }
 
+      triggerSuccessHaptic()
       await Promise.all([
         mutate(['harvestlink-orders', user.id]),
         mutate(['harvestlink-notifications', user.id]),
@@ -115,6 +195,7 @@ export function useAdvanceOrder() {
       if (!user) {
         const msg = 'Sign in to update an order.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
@@ -131,9 +212,11 @@ export function useAdvanceOrder() {
       if (rpcError) {
         const msg = 'That order update could not be saved. Refresh and try again.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
+      triggerSuccessHaptic()
       await Promise.all([
         mutate(['harvestlink-orders', user.id]),
         mutate(['harvestlink-notifications', user.id]),
@@ -158,11 +241,13 @@ export function useRateOrder() {
       if (!user) {
         const msg = 'Sign in to rate a delivered order.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
       if (rating < 1 || rating > 5) {
         const msg = 'Select a rating between 1 and 5 stars.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
@@ -182,9 +267,11 @@ export function useRateOrder() {
           ? 'This order can no longer be rated. Refresh your orders and try again.'
           : 'We couldn’t save your rating. Please try again.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
+      triggerSuccessHaptic()
       await mutate(['harvestlink-orders', user.id])
       return { error: null, success: true }
     },
@@ -273,9 +360,11 @@ export type CreateListingInput = {
   category?: string
   pricePerKg: number
   availableKg: number
-  estimatedShelfLifeDays?: number
+  unit: string
+  estimatedShelfLifeDays: number
   harvestedOn?: string
   scanConfidence?: number | null
+  localPhotoUri?: string | null
   imageUrl?: string
   area?: string
   farmName?: string
@@ -285,6 +374,7 @@ export function useCreateListing() {
   const { user, profile } = useHarvestLink()
   const { mutate } = useSWRConfig()
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const createListing = useCallback(
@@ -292,12 +382,14 @@ export function useCreateListing() {
       if (!user || !profile) {
         const msg = 'Sign in and finish your farmer profile before publishing a harvest.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
       const roleAllowed = profile.role === 'farmer' || profile.role === 'both'
       if (!roleAllowed) {
         const msg = 'Choose Farmer or Both in your profile before publishing a harvest.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
@@ -305,6 +397,7 @@ export function useCreateListing() {
       const numericPrice = Number(input.pricePerKg)
       const numericQuantity = Number(input.availableKg)
       const numericDays = Number(input.estimatedShelfLifeDays)
+      const unit = normalizeUnit(input.unit)
 
       if (
         cropTrimmed.length < 2 ||
@@ -316,18 +409,39 @@ export function useCreateListing() {
         numericDays < 1 ||
         numericDays > 60
       ) {
-        const msg = 'Add a crop, a price, a quantity, and a shelf-life estimate to continue.'
+        const msg = 'Add a crop, unit, price, quantity, and shelf-life estimate (1–60 days) to continue.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
       setBusy(true)
       setError(null)
 
+      let finalImageUrl = input.imageUrl
+      if (input.localPhotoUri) {
+        setProgress('Uploading produce photo…')
+        try {
+          finalImageUrl = await uploadListingPhoto(input.localPhotoUri, user.id)
+        } catch (uploadErr) {
+          const msg = uploadErr instanceof Error
+            ? uploadErr.message
+            : 'Photo upload failed. Check your connection and try again.'
+          setProgress(null)
+          setBusy(false)
+          setError(msg)
+          triggerErrorHaptic()
+          return { error: msg, success: false }
+        }
+      } else if (!finalImageUrl) {
+        finalImageUrl = imageForCrop(cropTrimmed)
+      }
+
+      setProgress('Publishing harvest…')
+
       const category = input.category || categoryForCrop(cropTrimmed)
-      const imageUrl = input.imageUrl || imageForCrop(cropTrimmed)
       const farmName = input.farmName?.trim() || profile.farm_name || 'Independent farm'
-      const area = input.area || profile.default_area || 'Lekki'
+      const area = input.area || profile.default_area || 'Ikorodu'
       const harvestedOn = input.harvestedOn || todayInLagos()
 
       const { error: insertError } = await supabase.from('listings').insert({
@@ -338,22 +452,29 @@ export function useCreateListing() {
         category,
         price_per_kg: numericPrice,
         available_kg: numericQuantity,
+        unit,
         harvested_on: harvestedOn,
         estimated_shelf_life_days: numericDays,
         scan_confidence: input.scanConfidence ?? null,
-        image_url: imageUrl,
+        image_url: finalImageUrl,
         area,
+        status: 'active',
         is_demo: false,
       })
 
+      setProgress(null)
       setBusy(false)
 
       if (insertError) {
-        const msg = 'This harvest could not be published. Check the details and try again.'
+        const msg = insertError.message.toLowerCase().includes('unit')
+          ? 'Database unit column missing. Apply supabase/migrations/20261125_units_and_storage.sql and retry.'
+          : 'This harvest could not be published. Check the details and try again.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false }
       }
 
+      triggerSuccessHaptic()
       await Promise.all([
         mutate('harvestlink-listings'),
         mutate(['harvestlink-farmer-listings', user.id]),
@@ -364,7 +485,126 @@ export function useCreateListing() {
     [mutate, profile, user],
   )
 
-  return { createListing, busy, error, setError }
+  return { createListing, busy, progress, error, setError }
+}
+
+export type UpdateListingInput = {
+  listingId: string
+  pricePerKg?: number
+  availableKg?: number
+  unit?: string
+  status?: Listing['status']
+  estimatedShelfLifeDays?: number
+}
+
+export function useUpdateListing() {
+  const { user } = useHarvestLink()
+  const { mutate } = useSWRConfig()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const updateListing = useCallback(
+    async (input: UpdateListingInput): Promise<{ error: string | null; success: boolean }> => {
+      if (!user) {
+        const msg = 'Sign in to update your harvest.'
+        setError(msg)
+        triggerErrorHaptic()
+        return { error: msg, success: false }
+      }
+
+      const payload: Record<string, unknown> = {}
+      if (input.pricePerKg !== undefined) {
+        if (!Number.isFinite(input.pricePerKg) || input.pricePerKg <= 0) {
+          const msg = 'Enter a valid price greater than zero.'
+          setError(msg)
+          return { error: msg, success: false }
+        }
+        payload.price_per_kg = input.pricePerKg
+      }
+      if (input.availableKg !== undefined) {
+        if (!Number.isFinite(input.availableKg) || input.availableKg < 0) {
+          const msg = 'Quantity cannot be negative.'
+          setError(msg)
+          return { error: msg, success: false }
+        }
+        payload.available_kg = input.availableKg
+      }
+      if (input.unit !== undefined) payload.unit = normalizeUnit(input.unit)
+      if (input.status !== undefined) payload.status = input.status
+      if (input.estimatedShelfLifeDays !== undefined) {
+        payload.estimated_shelf_life_days = Math.max(0, Math.min(60, Math.round(input.estimatedShelfLifeDays)))
+      }
+
+      setBusy(true)
+      setError(null)
+      const { error: updateError } = await supabase
+        .from('listings')
+        .update(payload)
+        .eq('id', input.listingId)
+        .eq('farmer_id', user.id)
+      setBusy(false)
+
+      if (updateError) {
+        const msg = 'Your harvest could not be updated. Check your connection and try again.'
+        setError(msg)
+        triggerErrorHaptic()
+        return { error: msg, success: false }
+      }
+
+      triggerSuccessHaptic()
+      await Promise.all([
+        mutate('harvestlink-listings'),
+        mutate(['harvestlink-farmer-listings', user.id]),
+      ])
+      return { error: null, success: true }
+    },
+    [mutate, user],
+  )
+
+  return { updateListing, busy, error, setError }
+}
+
+export function useDeleteListing() {
+  const { user } = useHarvestLink()
+  const { mutate } = useSWRConfig()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const deleteListing = useCallback(
+    async (listingId: string): Promise<{ error: string | null; success: boolean }> => {
+      if (!user) {
+        const msg = 'Sign in to remove your harvest.'
+        setError(msg)
+        return { error: msg, success: false }
+      }
+
+      setBusy(true)
+      setError(null)
+      const { error: deleteError } = await supabase
+        .from('listings')
+        .delete()
+        .eq('id', listingId)
+        .eq('farmer_id', user.id)
+      setBusy(false)
+
+      if (deleteError) {
+        const msg = 'This harvest could not be deleted (it may already have orders). Try hiding it instead.'
+        setError(msg)
+        triggerErrorHaptic()
+        return { error: msg, success: false }
+      }
+
+      triggerSuccessHaptic()
+      await Promise.all([
+        mutate('harvestlink-listings'),
+        mutate(['harvestlink-farmer-listings', user.id]),
+      ])
+      return { error: null, success: true }
+    },
+    [mutate, user],
+  )
+
+  return { deleteListing, busy, error, setError }
 }
 
 export function useSaveScan() {
@@ -433,6 +673,7 @@ export function useAnalyzeScan() {
       if (!apiBase) {
         const msg = 'Freshness analysis is not connected. Set the mobile app API URL and try again.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false, scan: null }
       }
 
@@ -443,6 +684,7 @@ export function useAnalyzeScan() {
         if (!session?.access_token) {
           const msg = 'Sign in to scan.'
           setError(msg)
+          setBusy(false)
           return { error: msg, success: false, scan: null }
         }
 
@@ -453,7 +695,7 @@ export function useAnalyzeScan() {
         } else if (Platform.OS === 'web') {
           const response = await fetch(photo.uri)
           const blob = await response.blob()
-          if (blob.size > 6 * 1024 * 1024) {
+          if (blob.size > MAX_PHOTO_BYTES) {
             throw new Error('Choose a photo smaller than 6 MB for a quicker estimate.')
           }
           formData.append('image', blob, photo.name)
@@ -473,11 +715,13 @@ export function useAnalyzeScan() {
         setLatestScan(scan)
         const saved = await saveScan(scan)
         setBusy(false)
+        triggerSuccessHaptic()
         return { error: saved.error, success: true, scan }
       } catch (caught) {
         const msg = caught instanceof Error ? caught.message : 'The scan could not be completed. Please try another photo.'
         setError(msg)
         setBusy(false)
+        triggerErrorHaptic()
         return { error: msg, success: false, scan: null }
       }
     },
@@ -512,6 +756,7 @@ export function useUpdateProfile() {
       if (fields.displayName !== undefined && fields.displayName.trim().length < 2) {
         const msg = 'Add a name with at least two characters.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false, profile: null }
       }
 
@@ -532,19 +777,46 @@ export function useUpdateProfile() {
         .select(PROFILE_COLUMNS)
         .maybeSingle()
 
-      setBusy(false)
-
       if (updateError) {
+        setBusy(false)
         const msg = 'Your profile could not be saved. Check your connection and try again.'
         setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false, profile: null }
       }
 
-      const updated = (data as Profile | null) ?? null
+      let updated = (data as Profile | null) ?? null
+      if (!updated && fields.displayName) {
+        const fallbackRole = fields.role ?? 'buyer'
+        const insertPayload: Profile = {
+          id: user.id,
+          display_name: fields.displayName.trim(),
+          phone: user.phone ?? null,
+          role: fallbackRole,
+          default_area: fields.defaultArea ?? 'Lekki',
+          farm_name: fallbackRole === 'buyer' ? null : fields.farmName?.trim() || null,
+        }
+        const { data: inserted, error: insertError } = await supabase
+          .from('profiles')
+          .insert(insertPayload)
+          .select(PROFILE_COLUMNS)
+          .maybeSingle()
+        if (insertError) {
+          setBusy(false)
+          const msg = 'Your profile could not be saved. Check your connection and try again.'
+          setError(msg)
+          triggerErrorHaptic()
+          return { error: msg, success: false, profile: null }
+        }
+        updated = (inserted as Profile | null) ?? insertPayload
+      }
+
+      setBusy(false)
       if (updated) {
         await mutate(['harvestlink-profile', user.id], updated)
       }
       await refreshProfile(user.id)
+      triggerSuccessHaptic()
 
       return { error: null, success: true, profile: updated }
     },
@@ -554,41 +826,27 @@ export function useUpdateProfile() {
   return { updateProfile, busy, error, setError }
 }
 
-export type SendPhoneCodeInput = {
-  phone: string
+export type CompleteOnboardingInput = {
   name: string
   role: HarvestRole
   farmName?: string
-  area?: string
-}
-
-export type VerifyPhoneCodeInput = {
-  phone: string
-  token: string
-  name: string
-  role: HarvestRole
-  farmName?: string
-  area?: string
+  area: string
 }
 
 export function usePhoneAuth() {
-  const { refreshProfile } = useHarvestLink()
+  const { user, refreshProfile } = useHarvestLink()
   const { mutate } = useSWRConfig()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const sendCode = useCallback(
-    async (input: SendPhoneCodeInput): Promise<{ error: string | null; success: boolean; phone: string }> => {
+    async (rawPhone: string): Promise<{ error: string | null; success: boolean; phone: string }> => {
       setError(null)
-      const normalizedPhone = normalizeNigerianPhone(input.phone)
+      const normalizedPhone = normalizeNigerianPhone(rawPhone)
       if (!/^\+\d{10,15}$/.test(normalizedPhone)) {
-        const msg = 'Enter a valid phone number, including your country code.'
+        const msg = 'Enter a valid Nigerian phone number (e.g. 0801 234 5678).'
         setError(msg)
-        return { error: msg, success: false, phone: normalizedPhone }
-      }
-      if (input.name.trim().length < 2) {
-        const msg = 'Add your name so farmers know who they’re meeting.'
-        setError(msg)
+        triggerErrorHaptic()
         return { error: msg, success: false, phone: normalizedPhone }
       }
 
@@ -596,27 +854,22 @@ export function usePhoneAuth() {
       try {
         const { error: otpError } = await supabase.auth.signInWithOtp({
           phone: normalizedPhone,
-          options: {
-            shouldCreateUser: true,
-            data: {
-              display_name: input.name.trim(),
-              role: input.role,
-              farm_name: input.farmName?.trim() || null,
-              default_area: input.area || 'Lekki',
-            },
-          },
+          options: { shouldCreateUser: true },
         })
         setBusy(false)
         if (otpError) {
           const msg = explainAuthError(otpError.message)
           setError(msg)
+          triggerErrorHaptic()
           return { error: msg, success: false, phone: normalizedPhone }
         }
+        triggerSuccessHaptic()
         return { error: null, success: true, phone: normalizedPhone }
       } catch {
         const msg = 'We couldn’t send a code right now. Check your connection and try again.'
         setError(msg)
         setBusy(false)
+        triggerErrorHaptic()
         return { error: msg, success: false, phone: normalizedPhone }
       }
     },
@@ -624,61 +877,118 @@ export function usePhoneAuth() {
   )
 
   const verifyCode = useCallback(
-    async (input: VerifyPhoneCodeInput): Promise<{ error: string | null; success: boolean; profile: Profile | null }> => {
+    async (
+      phone: string,
+      token: string,
+    ): Promise<{ error: string | null; success: boolean; needsOnboarding: boolean; profile: Profile | null }> => {
       setError(null)
-      if (!/^\d{6}$/.test(input.token.trim())) {
+      if (!/^\d{6}$/.test(token.trim())) {
         const msg = 'Enter the 6-digit code sent to your phone.'
         setError(msg)
-        return { error: msg, success: false, profile: null }
+        triggerErrorHaptic()
+        return { error: msg, success: false, needsOnboarding: false, profile: null }
       }
 
       setBusy(true)
       try {
         const { data, error: verifyError } = await supabase.auth.verifyOtp({
-          phone: input.phone,
-          token: input.token.trim(),
+          phone,
+          token: token.trim(),
           type: 'sms',
         })
         if (verifyError || !data.user) {
           const msg = explainAuthError(verifyError?.message ?? 'verification_failed')
           setError(msg)
           setBusy(false)
-          return { error: msg, success: false, profile: null }
+          triggerErrorHaptic()
+          return { error: msg, success: false, needsOnboarding: false, profile: null }
         }
 
-        const profile: Profile = {
-          id: data.user.id,
-          display_name: input.name.trim() || String(data.user.user_metadata?.display_name ?? 'HarvestLink member'),
-          phone: data.user.phone ?? input.phone,
-          role: input.role,
-          default_area: input.area || String(data.user.user_metadata?.default_area ?? 'Lekki'),
-          farm_name: input.farmName?.trim() || null,
-        }
-        const { error: profileError } = await supabase
+        const { data: existingData, error: fetchError } = await supabase
           .from('profiles')
-          .upsert(profile, { onConflict: 'id' })
-        setBusy(false)
+          .select(PROFILE_COLUMNS)
+          .eq('id', data.user.id)
+          .maybeSingle()
 
-        if (profileError) {
-          const msg = 'Your number is verified, but we couldn’t finish setting up your profile. Please try again.'
+        if (fetchError) {
+          setBusy(false)
+          const msg = 'Your number is verified, but we couldn’t check your account. Please try again.'
           setError(msg)
-          return { error: msg, success: false, profile: null }
+          triggerErrorHaptic()
+          return { error: msg, success: false, needsOnboarding: false, profile: null }
         }
 
-        await mutate(['harvestlink-profile', data.user.id], profile, { revalidate: false })
-        await refreshProfile(data.user.id)
-        return { error: null, success: true, profile }
+        const existing = (existingData as Profile | null) ?? null
+        if (existing) {
+          await mutate(['harvestlink-profile', data.user.id], existing, { revalidate: false })
+          await refreshProfile(data.user.id)
+          setBusy(false)
+          triggerSuccessHaptic()
+          return { error: null, success: true, needsOnboarding: false, profile: existing }
+        }
+
+        // First-time user: do NOT auto-upsert or overwrite anything yet; prompt onboarding step.
+        setBusy(false)
+        triggerSuccessHaptic()
+        return { error: null, success: true, needsOnboarding: true, profile: null }
       } catch {
         const msg = 'We couldn’t complete phone verification. Please try again.'
         setError(msg)
         setBusy(false)
-        return { error: msg, success: false, profile: null }
+        triggerErrorHaptic()
+        return { error: msg, success: false, needsOnboarding: false, profile: null }
       }
     },
     [mutate, refreshProfile],
   )
 
-  return { sendCode, verifyCode, busy, error, setError }
+  const completeOnboarding = useCallback(
+    async (
+      input: CompleteOnboardingInput,
+    ): Promise<{ error: string | null; success: boolean; profile: Profile | null }> => {
+      setError(null)
+      if (input.name.trim().length < 2) {
+        const msg = 'Add a name with at least two characters.'
+        setError(msg)
+        triggerErrorHaptic()
+        return { error: msg, success: false, profile: null }
+      }
+      const currentUser = user ?? (await supabase.auth.getUser()).data.user
+      if (!currentUser) {
+        const msg = 'Your session expired. Verify your phone number again.'
+        setError(msg)
+        return { error: msg, success: false, profile: null }
+      }
+
+      setBusy(true)
+      const profile: Profile = {
+        id: currentUser.id,
+        display_name: input.name.trim(),
+        phone: currentUser.phone ?? null,
+        role: input.role,
+        default_area: input.area,
+        farm_name: input.role === 'buyer' ? null : input.farmName?.trim() || null,
+      }
+
+      const { error: insertError } = await supabase.from('profiles').insert(profile)
+      setBusy(false)
+
+      if (insertError) {
+        const msg = 'Could not save your new profile. Check your connection and try again.'
+        setError(msg)
+        triggerErrorHaptic()
+        return { error: msg, success: false, profile: null }
+      }
+
+      await mutate(['harvestlink-profile', currentUser.id], profile, { revalidate: false })
+      await refreshProfile(currentUser.id)
+      triggerSuccessHaptic()
+      return { error: null, success: true, profile }
+    },
+    [mutate, refreshProfile, user],
+  )
+
+  return { sendCode, verifyCode, completeOnboarding, busy, error, setError }
 }
 
 export function useSignOut() {
@@ -695,6 +1005,7 @@ export function useSignOut() {
     if (signOutError) {
       const msg = 'We couldn’t sign you out. Please try again.'
       setError(msg)
+      triggerErrorHaptic()
       return { error: msg, success: false }
     }
 
