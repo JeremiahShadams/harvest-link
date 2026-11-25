@@ -1,512 +1,663 @@
-import { useEffect, useState } from 'react'
-import { router } from 'expo-router'
-import { Image } from 'expo-image'
+import { useCallback, useEffect, useState } from 'react'
 import * as ImagePicker from 'expo-image-picker'
+import { Image } from 'expo-image'
+import { router } from 'expo-router'
 import {
+  Apple,
   ArrowLeft,
-  ArrowRight,
-  Calendar,
   Camera,
-  MapPin,
-  ScanLine,
-  Search,
-  Sparkles,
+  Flame,
+  ImagePlus,
+  Leaf,
+  Package,
+  Sprout,
+  Wheat,
   X,
 } from 'lucide-react-native'
 import {
-  Alert,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg'
-import { useHarvestLink } from '../context'
-import { DesignButton, DesignScreen, DesignSelect } from './ui'
-import { body, C, heading, R, shadow } from './tokens'
-import { useCreateListing } from '@/lib/harvestlink/use-mutations'
-import { loadDesignValue, saveDesignValue } from '@/lib/harvestlink/design-local'
-import { getListingImageUrl } from '@/lib/harvestlink/utils'
+import { SafeAreaView } from 'react-native-safe-area-context'
+import { useHarvestLink } from '@/components/harvestlink/context'
+import {
+  AnimatedEntrance,
+  AppButton,
+  Card,
+  EmptyState,
+  Eyebrow,
+  MessageBanner,
+  SelectField,
+  TextField,
+  colors,
+  fonts,
+  radii,
+  space,
+  typeScale,
+} from '@/components/harvestlink/ui'
+import { clearDesignValue, loadDesignValue, saveDesignValue } from '@/lib/harvestlink/design-local'
+import { triggerImpactHaptic, triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
+import type { ListingUnit } from '@/lib/harvestlink/types'
+import { useCreateListing } from '@/lib/harvestlink/use-data'
+import {
+  BUYER_AREAS,
+  CROPS,
+  FARM_HUBS,
+  UNIT_OPTIONS,
+  categoryForCrop,
+  formatNaira,
+  formatUnitCount,
+  formatUnitSingular,
+  isDiscreteUnit,
+  todayInLagos,
+} from '@/lib/harvestlink/utils'
 
-type Category = 'Peppers' | 'Tomatoes' | 'Leafy Greens' | 'Maize'
-
-type Photo = { id: string; uri: string }
-
-const UNIT_OPTIONS = [
-  'Baskets (Big)',
-  'Baskets (Small)',
-  'Sacks',
-  'Crates',
-  'Kilograms (kg)',
-] as const
-
-type Unit = (typeof UNIT_OPTIONS)[number]
+const DRAFT_KEY = 'listing-draft'
 
 type ListingDraft = {
   crop: string
-  category: Category
-  photos: Photo[]
+  customCrop: string
+  unit: ListingUnit
   quantity: string
-  unit: Unit
   price: string
-  shelfDays: string
-  harvestDate: string
-  description: string
-  savedAt?: string
+  shelfLifeDays: string
+  harvestedOn: string
+  area: string
+  farmName: string
+  photoUri: string | null
 }
 
-const CATEGORIES: { label: string; value: Category }[] = [
-  { label: '🌶️ Peppers', value: 'Peppers' },
-  { label: '🍅 Tomatoes', value: 'Tomatoes' },
-  { label: '🥬 Leafy Greens', value: 'Leafy Greens' },
-  { label: '🌽 Maize', value: 'Maize' },
+const CROP_ICONS = {
+  Tomatoes: Sprout,
+  'Leafy greens': Leaf,
+  Peppers: Flame,
+  Maize: Wheat,
+  Plantain: Apple,
+  Other: Package,
+} as const
+
+const HUB_AND_AREA_OPTIONS = [
+  ...FARM_HUBS.map((hub) => ({ value: hub, label: `${hub} (Farm hub)` })),
+  ...BUYER_AREAS.map((area) => ({ value: area, label: `${area} (City zone)` })),
 ]
 
-export function CreateListingScreen() {
-  const insets = useSafeAreaInsets()
-  const { user, profile, latestScan } = useHarvestLink()
-  const { createListing, busy } = useCreateListing()
-  const [cropOverride, setCropOverride] = useState<string | null>(null)
-  const [category, setCategory] = useState<Category>('Peppers')
-  const [photos, setPhotos] = useState<Photo[]>([])
-  const [quantity, setQuantity] = useState('')
-  const [unit, setUnit] = useState<Unit>('Baskets (Big)')
-  const [price, setPrice] = useState('')
-  const [shelfDaysOverride, setShelfDaysOverride] = useState<string | null>(null)
-  const [harvestDate, setHarvestDate] = useState('')
-  const [description, setDescription] = useState('')
-  const [savingDraft, setSavingDraft] = useState(false)
+const UNIT_SELECT_OPTIONS = UNIT_OPTIONS.map((unit) => ({ value: unit, label: unit }))
+const SHELF_LIFE_PRESETS = ['2', '4', '7', '14'] as const
 
-  const crop = cropOverride ?? latestScan?.crop ?? ''
-  const shelfDays = shelfDaysOverride ?? (latestScan ? String(latestScan.remaining_days) : '')
+export function CreateListingScreen() {
+  const { user, profile, latestScan, setLatestScan } = useHarvestLink()
+  const { createListing, busy, progress, error, setError } = useCreateListing()
+
+  const [crop, setCrop] = useState<string>(() => {
+    if (!latestScan) return 'Tomatoes'
+    return CROPS.find((item) => item.toLowerCase() === latestScan.crop.toLowerCase()) ?? 'Other'
+  })
+  const [customCrop, setCustomCrop] = useState<string>(() => {
+    if (!latestScan) return ''
+    const matched = CROPS.find((item) => item.toLowerCase() === latestScan.crop.toLowerCase())
+    return matched ? '' : latestScan.crop
+  })
+  const [unit, setUnit] = useState<ListingUnit>('Baskets (Big)')
+  const [quantity, setQuantity] = useState('')
+  const [price, setPrice] = useState('')
+  const [shelfLifeDays, setShelfLifeDays] = useState<string>(() =>
+    latestScan ? String(Math.max(1, Math.min(60, Math.round(latestScan.remaining_days)))) : '4',
+  )
+  const [harvestedOn, setHarvestedOn] = useState(() => todayInLagos())
+  const [area, setArea] = useState<string>(() => profile?.default_area || 'Ikorodu')
+  const [farmName, setFarmName] = useState<string>(() => profile?.farm_name || '')
+  const [photoUri, setPhotoUri] = useState<string | null>(null)
+  const [scanConfidence, setScanConfidence] = useState<number | null>(() => latestScan?.confidence ?? null)
+  const [draftLoaded, setDraftLoaded] = useState<boolean>(() => Boolean(latestScan))
 
   useEffect(() => {
     let active = true
-    void loadDesignValue<ListingDraft | null>('listing-draft', null).then((saved) => {
-      if (!active || !saved) return
-      if (typeof saved.crop === 'string') setCropOverride(saved.crop)
-      if (CATEGORIES.some((option) => option.value === saved.category)) setCategory(saved.category)
-      if (Array.isArray(saved.photos)) {
-        setPhotos(saved.photos.filter((photo) => typeof photo?.uri === 'string' && typeof photo?.id === 'string'))
+    if (latestScan) {
+      return () => { active = false }
+    }
+
+    void loadDesignValue<Partial<ListingDraft> | null>(DRAFT_KEY, null).then((draft) => {
+      if (!active) return
+      if (draft) {
+        if (draft.crop) setCrop(draft.crop)
+        if (draft.customCrop) setCustomCrop(draft.customCrop)
+        if (draft.unit) setUnit(draft.unit)
+        if (draft.quantity) setQuantity(draft.quantity)
+        if (draft.price) setPrice(draft.price)
+        if (draft.shelfLifeDays) setShelfLifeDays(draft.shelfLifeDays)
+        if (draft.harvestedOn) setHarvestedOn(draft.harvestedOn)
+        if (draft.area) setArea(draft.area)
+        if (draft.farmName) setFarmName(draft.farmName)
+        if (draft.photoUri) setPhotoUri(draft.photoUri)
       }
-      if (typeof saved.quantity === 'string') setQuantity(saved.quantity)
-      if (UNIT_OPTIONS.some((option) => option === saved.unit)) setUnit(saved.unit)
-      if (typeof saved.price === 'string') setPrice(saved.price)
-      if (typeof saved.shelfDays === 'string') setShelfDaysOverride(saved.shelfDays)
-      if (typeof saved.harvestDate === 'string') setHarvestDate(saved.harvestDate)
-      if (typeof saved.description === 'string') setDescription(saved.description)
+      setDraftLoaded(true)
     })
+
     return () => { active = false }
-  }, [])
+  }, [latestScan])
 
-  const goBack = () => {
-    if (router.canGoBack()) router.back()
-    else router.navigate('/farmer' as never)
-  }
+  useEffect(() => {
+    if (!draftLoaded) return
+    const timer = setTimeout(() => {
+      const draft: ListingDraft = {
+        crop,
+        customCrop,
+        unit,
+        quantity,
+        price,
+        shelfLifeDays,
+        harvestedOn,
+        area,
+        farmName,
+        photoUri,
+      }
+      void saveDesignValue(DRAFT_KEY, draft)
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [area, crop, customCrop, draftLoaded, farmName, harvestedOn, photoUri, price, quantity, shelfLifeDays, unit])
 
-  const selectCategory = (next: Category) => {
-    setCategory(next)
-    if (next === 'Tomatoes') setCropOverride('Tomatoes')
-    if (next === 'Leafy Greens') setCropOverride('Leafy Greens')
-    if (next === 'Maize') setCropOverride('Maize')
-    if (next === 'Peppers') setCropOverride('Rodo (Scotch Bonnet Pepper)')
-  }
-
-  const addPhoto = async () => {
-    if (photos.length >= 4) {
-      Alert.alert('Maximum photos reached', 'This listing already has four photos.')
-      return
+  const pickPhoto = useCallback(async (source: 'library' | 'camera') => {
+    setError(null)
+    if (source === 'camera') {
+      const perm = await ImagePicker.requestCameraPermissionsAsync()
+      if (!perm.granted) {
+        setError('Camera permission is required to capture a harvest photo.')
+        return
+      }
+    } else {
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (!perm.granted) {
+        setError('Photo library permission is required to attach a harvest photo.')
+        return
+      }
     }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: false,
-      allowsMultipleSelection: true,
-      quality: 0.8,
-      selectionLimit: 4 - photos.length,
-    })
-    if (result.canceled) return
-    const next = result.assets.map((asset, index) => ({ id: `${Date.now()}-${index}`, uri: asset.uri }))
-    setPhotos((current) => [...current, ...next].slice(0, 4))
-  }
 
-  const saveDraft = async () => {
-    setSavingDraft(true)
-    await saveDesignValue('listing-draft', {
-      crop,
-      category,
-      photos,
-      quantity,
-      unit,
-      price,
-      shelfDays,
-      harvestDate,
-      description,
-      savedAt: new Date().toISOString(),
-    })
-    setSavingDraft(false)
-    Alert.alert('Draft saved on this device', 'You can return to this listing form and continue later.')
-  }
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.72, allowsEditing: true, aspect: [4, 3] })
+      : await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.72, allowsEditing: true, aspect: [4, 3] })
 
-  const validate = () => {
-    if (crop.trim().length < 2) return 'Add the produce you are listing.'
-    const numericQuantity = Number(quantity)
-    const numericPrice = Number(price)
-    const numericShelfDays = Number(shelfDays)
-    if (!Number.isFinite(numericQuantity) || numericQuantity <= 0) return 'Add a quantity greater than zero.'
-    if (!Number.isFinite(numericPrice) || numericPrice <= 0) return 'Add a unit price greater than zero.'
-    if (!Number.isInteger(numericShelfDays) || numericShelfDays < 1 || numericShelfDays > 60) return 'Add an estimated shelf life between 1 and 60 days.'
-    if (harvestDate && Number.isNaN(new Date(harvestDate).getTime())) return 'Use a valid harvest date.'
-    return ''
-  }
-
-  const publish = async () => {
-    const validationMessage = validate()
-    if (validationMessage) {
-      Alert.alert('Check your listing', validationMessage)
-      return
+    if (!result.canceled && result.assets[0]?.uri) {
+      triggerImpactHaptic()
+      setPhotoUri(result.assets[0].uri)
     }
-    if (!user || !profile) {
-      Alert.alert('Sign in required', 'Sign in with your farmer profile before publishing a listing.')
-      return
-    }
-    const numericQuantity = Number(quantity)
-    const numericPrice = Number(price)
-    const trimmedCrop = crop.trim()
-    const matchingScan = latestScan?.crop.trim().toLowerCase() === trimmedCrop.toLowerCase() ? latestScan : null
-    const imageUrl = getListingImageUrl({ image_url: photos[0]?.uri ?? '' })
+  }, [setError])
+
+  const handleClearDraft = useCallback(async () => {
+    triggerSelectionHaptic()
+    await clearDesignValue(DRAFT_KEY)
+    setCrop('Tomatoes')
+    setCustomCrop('')
+    setUnit('Baskets (Big)')
+    setQuantity('')
+    setPrice('')
+    setShelfLifeDays('4')
+    setHarvestedOn(todayInLagos())
+    setPhotoUri(null)
+    setScanConfidence(null)
+    setLatestScan(null)
+    setError(null)
+  }, [setError, setLatestScan])
+
+  const resolvedCrop = crop === 'Other' ? customCrop.trim() || 'Other produce' : crop
+  const numericQty = Number(quantity) || 0
+  const numericPrice = Number(price) || 0
+  const lotTotal = numericQty > 0 && numericPrice > 0 ? numericQty * numericPrice : 0
+  const singularUnit = formatUnitSingular(unit)
+
+  async function handlePublish() {
     const result = await createListing({
-      crop: trimmedCrop,
-      category,
-      pricePerKg: numericPrice,
-      availableKg: numericQuantity,
-      harvestedOn: harvestDate || undefined,
-      estimatedShelfLifeDays: Number(shelfDays),
-      scanConfidence: matchingScan?.confidence ?? null,
-      ...(imageUrl ? { imageUrl } : {}),
-      area: profile.default_area || undefined,
+      crop: resolvedCrop,
+      category: categoryForCrop(crop),
+      pricePerKg: Number(price),
+      availableKg: Number(quantity),
+      unit,
+      estimatedShelfLifeDays: Number(shelfLifeDays),
+      harvestedOn: harvestedOn.trim() || todayInLagos(),
+      scanConfidence,
+      localPhotoUri: photoUri,
+      area,
+      farmName: farmName.trim() || profile?.farm_name || undefined,
     })
-    if (!result.success) {
-      Alert.alert('Listing not published', result.error ?? 'Check the details and try again.')
-      return
-    }
-    Alert.alert('Listing published', 'Your produce is now visible to nearby buyers.')
-    goBack()
+
+    if (!result.success) return
+
+    await clearDesignValue(DRAFT_KEY)
+    setLatestScan(null)
+    router.replace('/harvests')
   }
 
   return (
-    <>
-      <View style={[styles.header, { paddingTop: 56 + insets.top }]}>
-        <View style={styles.headerRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Back to dashboard"
-            onPress={goBack}
-            style={({ pressed }) => [styles.backButton, pressed && styles.pressed]}
-          >
-            <ArrowLeft color={C.slate600} size={20} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Create Listing</Text>
-          <View style={styles.headerSpacer} />
-        </View>
-        <View style={styles.progressRow}>
-          <Text style={styles.progressLabel}>Step 2 of 3</Text>
-          <View style={styles.progressTrack}>
-            <View style={styles.progressFill} />
-          </View>
-        </View>
+    <SafeAreaView edges={['top', 'bottom']} style={styles.screen}>
+      <View style={styles.topBar}>
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.topBarBtn, pressed && styles.pressed]}
+        >
+          <ArrowLeft color={colors.pine} size={22} />
+        </Pressable>
+        <Text style={styles.topBarTitle}>New Harvest Listing</Text>
+        <Pressable
+          accessibilityLabel="Clear draft"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => void handleClearDraft()}
+          style={({ pressed }) => [styles.clearBtn, pressed && styles.pressed]}
+        >
+          <Text style={styles.clearBtnText}>Reset</Text>
+        </Pressable>
       </View>
 
-      <DesignScreen activeTab="home" contentStyle={styles.content}>
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>What are you listing?</Text>
-          <View style={styles.searchWrap}>
-            <Search color={C.slate400} size={16} style={styles.searchIcon} />
-            <TextInput
-              accessibilityLabel="Produce name"
-              onChangeText={setCropOverride}
-              placeholder="e.g. Tomatoes, Peppers, Maize"
-              placeholderTextColor={C.slate400}
-              style={styles.searchInput}
-              value={crop}
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          {!user || (profile?.role !== 'farmer' && profile?.role !== 'both') ? (
+            <EmptyState
+              title="Farmer account needed"
+              message="Sign in and set your role to Farmer or Both in Profile before publishing a harvest."
+              action={<AppButton label="Go to Profile" onPress={() => router.replace('/profile')} />}
             />
-          </View>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-            {CATEGORIES.map((option) => {
-              const selected = option.value === category
-              return (
-                <Pressable
-                  key={option.value}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  onPress={() => selectCategory(option.value)}
-                  style={[styles.chip, selected ? styles.chipSelected : styles.chipUnselected]}
-                >
-                  <Text numberOfLines={1} style={[styles.chipText, selected ? styles.chipTextSelected : styles.chipTextUnselected]}>{option.label}</Text>
-                </Pressable>
-              )
-            })}
-          </ScrollView>
-        </View>
+          ) : (
+            <>
+              <AnimatedEntrance delay={20}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>1 · HARVEST PHOTO</Eyebrow>
+                  <Text style={styles.sectionTitle}>Show buyers today’s batch</Text>
+                  <Text style={styles.helperText}>
+                    A real farm photo increases buyer confidence and prevents order disputes. Photos upload directly when you publish.
+                  </Text>
 
-        <View style={styles.section}>
-          <View style={styles.labelRow}>
-            <Text style={styles.fieldLabel}>Produce Photos</Text>
-            <Text style={styles.helperMuted}>Max 4 photos</Text>
-          </View>
-          <View style={styles.photoGrid}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Add Photo"
-              onPress={() => void addPhoto()}
-              style={({ pressed }) => [styles.addPhoto, pressed && styles.pressed]}
-            >
-              <Camera color={C.slate400} size={24} style={styles.addPhotoIcon} />
-              <Text style={styles.addPhotoText}>Add Photo</Text>
-            </Pressable>
-            {photos.map((photo) => (
-              <View key={photo.id} style={styles.photoTile}>
-                <Image source={{ uri: photo.uri }} style={styles.photoImage} contentFit="cover" />
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Remove photo"
-                  onPress={() => setPhotos((current) => current.filter((item) => item.id !== photo.id))}
-                  style={({ pressed }) => [styles.removePhoto, pressed && styles.pressedRemove]}
-                >
-                  <X color={C.white} size={12} />
-                </Pressable>
-              </View>
-            ))}
-            {photos.length < 2 ? <View style={styles.emptyPhotoSlot} /> : null}
-          </View>
-        </View>
+                  {photoUri ? (
+                    <View style={styles.photoPreviewBox}>
+                      <Image contentFit="cover" source={{ uri: photoUri }} style={styles.photoPreview} />
+                      <Pressable
+                        accessibilityLabel="Remove selected photo"
+                        accessibilityRole="button"
+                        onPress={() => {
+                          triggerSelectionHaptic()
+                          setPhotoUri(null)
+                        }}
+                        style={({ pressed }) => [styles.removePhotoBtn, pressed && styles.pressed]}
+                      >
+                        <X color={colors.white} size={18} />
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={styles.photoNotice}>
+                      <Text style={styles.photoNoticeText}>
+                        No farm photo attached yet — if skipped, a standard {resolvedCrop.toLowerCase()} illustration will be used.
+                      </Text>
+                    </View>
+                  )}
 
-        <View style={styles.detailsCard}>
-          <View>
-            <Text style={styles.detailLabel}>Quantity &amp; Unit</Text>
-            <View style={styles.quantityRow}>
-              <TextInput
-                accessibilityLabel="Quantity"
-                keyboardType="number-pad"
-                onChangeText={setQuantity}
-                placeholder="0"
-                style={styles.quantityInput}
-                value={quantity}
+                  <View style={styles.photoBtnRow}>
+                    <AppButton
+                      icon={<Camera color={colors.pine} size={18} />}
+                      label="Take Photo"
+                      onPress={() => void pickPhoto('camera')}
+                      style={styles.flex}
+                      variant="secondary"
+                    />
+                    <AppButton
+                      icon={<ImagePlus color={colors.pine} size={18} />}
+                      label="Gallery"
+                      onPress={() => void pickPhoto('library')}
+                      style={styles.flex}
+                      variant="secondary"
+                    />
+                  </View>
+                </Card>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={60}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>2 · PRODUCE TYPE</Eyebrow>
+                  <Text style={styles.sectionTitle}>What are you harvesting?</Text>
+
+                  <View style={styles.cropGrid}>
+                    {CROPS.map((item) => {
+                      const Icon = CROP_ICONS[item]
+                      const selected = crop === item
+                      return (
+                        <Pressable
+                          key={item}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected }}
+                          onPress={() => {
+                            triggerSelectionHaptic()
+                            setCrop(item)
+                          }}
+                          style={[styles.cropChip, selected && styles.cropChipSelected]}
+                        >
+                          <Icon color={selected ? colors.white : colors.pine} size={16} />
+                          <Text style={[styles.cropChipText, selected && styles.cropChipTextSelected]}>{item}</Text>
+                        </Pressable>
+                      )
+                    })}
+                  </View>
+
+                  {crop === 'Other' ? (
+                    <TextField
+                      label="Crop or local produce name"
+                      onChangeText={setCustomCrop}
+                      placeholder="e.g. Tatashe, Ugu leaves, Yellow Plantain"
+                      value={customCrop}
+                    />
+                  ) : null}
+                </Card>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={100}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>3 · UNIT, QUANTITY & PRICE</Eyebrow>
+                  <Text style={styles.sectionTitle}>How is this batch sold?</Text>
+
+                  <SelectField
+                    label="Selling unit"
+                    onChange={(nextUnit) => setUnit(nextUnit)}
+                    options={UNIT_SELECT_OPTIONS}
+                    value={unit}
+                  />
+
+                  <View style={styles.rowFields}>
+                    <TextField
+                      keyboardType={isDiscreteUnit(unit) ? 'number-pad' : 'decimal-pad'}
+                      label={`Available (${singularUnit}s)`}
+                      onChangeText={setQuantity}
+                      placeholder={isDiscreteUnit(unit) ? 'e.g. 12' : 'e.g. 80'}
+                      style={styles.flex}
+                      value={quantity}
+                    />
+                    <TextField
+                      keyboardType="number-pad"
+                      label={`Price / ${singularUnit} (₦)`}
+                      onChangeText={setPrice}
+                      placeholder="e.g. 18000"
+                      style={styles.flex}
+                      value={price}
+                    />
+                  </View>
+
+                  {lotTotal > 0 ? (
+                    <View style={styles.lotSummary}>
+                      <Text style={styles.lotSummaryLabel}>
+                        Listing {formatUnitCount(numericQty, unit)} at {formatNaira(numericPrice)}/{singularUnit}
+                      </Text>
+                      <Text style={styles.lotSummaryTotal}>Lot value {formatNaira(lotTotal)}</Text>
+                    </View>
+                  ) : null}
+
+                  <Text style={styles.fieldLabel}>Estimated fresh shelf life</Text>
+                  <View style={styles.presetRow}>
+                    {SHELF_LIFE_PRESETS.map((days) => {
+                      const active = shelfLifeDays === days
+                      return (
+                        <Pressable
+                          key={days}
+                          accessibilityRole="button"
+                          accessibilityState={{ selected: active }}
+                          onPress={() => {
+                            triggerSelectionHaptic()
+                            setShelfLifeDays(days)
+                          }}
+                          style={[styles.presetChip, active && styles.presetChipSelected]}
+                        >
+                          <Text style={[styles.presetText, active && styles.presetTextSelected]}>{days} days</Text>
+                        </Pressable>
+                      )
+                    })}
+                  </View>
+
+                  <View style={styles.rowFields}>
+                    <TextField
+                      hint={scanConfidence ? `Verified from scan (${scanConfidence}% confidence)` : '1 to 60 days'}
+                      keyboardType="number-pad"
+                      label="Shelf life (days)"
+                      onChangeText={setShelfLifeDays}
+                      placeholder="4"
+                      style={styles.flex}
+                      value={shelfLifeDays}
+                    />
+                    <TextField
+                      hint="YYYY-MM-DD (Lagos date)"
+                      label="Harvested on"
+                      onChangeText={setHarvestedOn}
+                      placeholder={todayInLagos()}
+                      style={styles.flex}
+                      value={harvestedOn}
+                    />
+                  </View>
+                </Card>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={140}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>4 · FARM & DISPATCH ZONE</Eyebrow>
+                  <Text style={styles.sectionTitle}>Where are buyers collecting from?</Text>
+
+                  <TextField
+                    label="Farm or cooperative name"
+                    onChangeText={setFarmName}
+                    placeholder="e.g. GreenAcres Farmstead"
+                    value={farmName}
+                  />
+
+                  <SelectField
+                    label="Primary farm hub or pickup area"
+                    onChange={setArea}
+                    options={HUB_AND_AREA_OPTIONS}
+                    value={area}
+                  />
+                </Card>
+              </AnimatedEntrance>
+
+              {progress ? <MessageBanner tone="info">{progress}</MessageBanner> : null}
+              {error ? <MessageBanner>{error}</MessageBanner> : null}
+
+              <AppButton
+                label={progress ?? 'Publish Harvest Listing'}
+                loading={busy}
+                onPress={() => void handlePublish()}
+                style={styles.submitBtn}
               />
-              <View style={styles.unitWrap}>
-                <DesignSelect
-                  accessibilityLabel="Unit"
-                  onChange={(next) => setUnit(next)}
-                  options={UNIT_OPTIONS.map((option) => ({ value: option, label: option }))}
-                  style={styles.unitSelect}
-                  value={unit}
-                  textStyle={styles.unitText}
-                />
-              </View>
-            </View>
-          </View>
-
-          <View>
-            <Text style={styles.detailLabel}>Unit Price</Text>
-            <View style={styles.priceWrap}>
-              <Text style={styles.naira}>₦</Text>
-              <TextInput
-                accessibilityLabel="Unit price"
-                keyboardType="number-pad"
-                onChangeText={setPrice}
-                placeholder="0.00"
-                style={styles.priceInput}
-                value={price}
-              />
-            </View>
-          </View>
-
-          <View>
-            <Text style={styles.detailLabel}>Estimated Shelf Life (days)</Text>
-            <TextInput
-              accessibilityLabel="Estimated shelf life in days"
-              keyboardType="number-pad"
-              onChangeText={setShelfDaysOverride}
-              placeholder="1-60"
-              placeholderTextColor={C.slate400}
-              style={styles.quantityInputFull}
-              value={shelfDays}
-            />
-            <Text style={styles.dateHint}>Use the result from a freshness scan when you have one.</Text>
-          </View>
-
-          <View>
-            <Text style={styles.detailLabel}>Harvest Date</Text>
-            <View style={styles.dateWrap}>
-              <Calendar color={C.slate400} size={16} style={styles.dateIcon} />
-              <TextInput
-                accessibilityLabel="Harvest date"
-                autoCapitalize="none"
-                keyboardType="numbers-and-punctuation"
-                onChangeText={setHarvestDate}
-                placeholder=""
-                style={styles.dateInput}
-                value={harvestDate}
-              />
-            </View>
-            <Text style={styles.dateHint}>Buyers prefer produce harvested within the last 48 hours.</Text>
-          </View>
-
-          <View>
-            <Text style={styles.detailLabel}>Description (Optional)</Text>
-            <TextInput
-              accessibilityLabel="Description"
-              multiline
-              numberOfLines={3}
-              onChangeText={setDescription}
-              placeholder="Any extra details about quality, variety, or packaging..."
-              placeholderTextColor={C.slate400}
-              style={styles.descriptionInput}
-              textAlignVertical="top"
-              value={description}
-            />
-          </View>
-        </View>
-
-        <View style={styles.aiCard}>
-          <Svg style={styles.aiGradient} viewBox="0 0 100 100" preserveAspectRatio="none">
-            <Defs>
-              <LinearGradient id="ai-card-gradient" x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0%" stopColor={C.farm50} />
-                <Stop offset="100%" stopColor={C.amber50} stopOpacity={0.5} />
-              </LinearGradient>
-            </Defs>
-            <Rect width="100" height="100" rx={0} fill="url(#ai-card-gradient)" />
-          </Svg>
-          <Sparkles color={C.amber200} size={60} style={styles.aiSparkles} />
-          <View style={styles.aiGlow} />
-          <View style={styles.aiContent}>
-            <View style={styles.aiHeadingRow}>
-              <View style={styles.aiIconWrap}><ScanLine color={C.farm700} size={18} /></View>
-              <Text style={styles.aiTitle}>AI Shelf-Life Intelligence</Text>
-            </View>
-            <Text style={styles.aiCopy}>Scan a sample of your produce. We&apos;ll estimate remaining freshness days to build trust with buyers.</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Scan Produce Now"
-              onPress={() => router.push('/scan' as never)}
-              style={({ pressed }) => [styles.aiButton, pressed && styles.pressedScan]}
-            >
-              <Camera color={C.slate400} size={16} />
-              <Text style={styles.aiButtonText}>Scan Produce Now</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.locationCard}>
-          <MapPin color={C.slate400} size={18} style={styles.locationIcon} />
-          <View style={styles.locationCopy}>
-            <Text style={styles.locationTitle}>Pickup Location</Text>
-            <Text style={styles.locationText}>
-              {profile?.default_area || 'Ikorodu Farm Hub, Lagos'}.{' '}
-              <Text
-                accessibilityRole="link"
-                onPress={() => router.push('/profile' as never)}
-                style={styles.locationLink}
-              >Change in profile</Text>.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.formActions}>
-          <DesignButton
-            label={savingDraft ? 'Saving Draft…' : 'Save Draft'}
-            loading={savingDraft}
-            onPress={() => void saveDraft()}
-            variant="secondary"
-            style={styles.draftButton}
-          />
-          <DesignButton
-            label={busy ? 'Publish Listing…' : 'Publish Listing'}
-            loading={busy}
-            onPress={() => void publish()}
-            iconAfter={<ArrowRight color={C.white} size={18} />}
-            style={styles.publishButton}
-          />
-        </View>
-      </DesignScreen>
-    </>
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
-  header: { backgroundColor: 'rgba(255,255,255,0.9)', borderBottomColor: C.slate100, borderBottomWidth: 1, paddingHorizontal: 20, paddingBottom: 16, zIndex: 30 },
-  headerRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  backButton: { alignItems: 'center', backgroundColor: C.slate50, borderColor: C.slate100, borderRadius: R.pill, borderWidth: 1, height: 40, justifyContent: 'center', width: 40 },
-  headerTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700', lineHeight: 22 }),
-  headerSpacer: { height: 40, width: 40 },
-  progressRow: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-  progressLabel: body({ color: C.farm700, fontSize: 10, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' }),
-  progressTrack: { backgroundColor: C.slate100, borderRadius: R.pill, flex: 1, height: 6, overflow: 'hidden' },
-  progressFill: { backgroundColor: C.farm600, borderRadius: R.pill, height: '100%', width: '66.666%' },
-  pressed: { transform: [{ scale: 0.95 }] },
-  pressedRemove: { transform: [{ scale: 0.9 }] },
-  pressedScan: { transform: [{ scale: 0.98 }] },
-  content: { gap: 28, paddingBottom: 120, paddingHorizontal: 20, paddingTop: 24 },
-  section: { gap: 12 },
-  fieldLabel: body({ color: C.slate900, fontSize: 14, fontWeight: '600' }),
-  searchWrap: { position: 'relative' },
-  searchIcon: { left: 16, position: 'absolute', top: 17 },
-  searchInput: body({ backgroundColor: C.white, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 50, paddingLeft: 40, paddingRight: 16, ...shadow.sm }),
-  chipRow: { gap: 8, paddingBottom: 4 },
-  chip: { borderRadius: R.lg, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 6 },
-  chipSelected: { backgroundColor: C.farm50, borderColor: C.farm200 },
-  chipUnselected: { backgroundColor: C.slate100, borderColor: C.slate200 },
-  chipText: body({ fontSize: 12 }),
-  chipTextSelected: { color: C.farm800, fontWeight: '600' },
-  chipTextUnselected: { color: C.slate600, fontWeight: '500' },
-  labelRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between' },
-  helperMuted: body({ color: C.slate400, fontSize: 11, fontWeight: '500' }),
-  photoGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  addPhoto: { alignItems: 'center', aspectRatio: 1, backgroundColor: C.slate50, borderColor: C.slate300, borderRadius: R['2xl'], borderStyle: 'dashed', borderWidth: 2, flexBasis: '31%', justifyContent: 'center' },
-  addPhotoIcon: { marginBottom: 6 },
-  addPhotoText: body({ color: C.slate500, fontSize: 10, fontWeight: '600' }),
-  photoTile: { aspectRatio: 1, backgroundColor: C.slate100, borderRadius: R['2xl'], flexBasis: '31%', overflow: 'hidden', position: 'relative', ...shadow.sm },
-  photoImage: { height: '100%', width: '100%' },
-  removePhoto: { alignItems: 'center', backgroundColor: C.black40, borderRadius: R.pill, height: 24, justifyContent: 'center', position: 'absolute', right: 6, top: 6, width: 24 },
-  emptyPhotoSlot: { aspectRatio: 1, backgroundColor: C.slate50, borderColor: C.slate100, borderRadius: R['2xl'], borderWidth: 1, flexBasis: '31%', opacity: 0.5 },
-  detailsCard: { backgroundColor: C.white, borderColor: C.slate100, borderRadius: R['3xl'], borderWidth: 1, gap: 20, padding: 20, ...shadow.card },
-  detailLabel: body({ color: C.slate500, fontSize: 11, fontWeight: '600', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }),
-  quantityRow: { flexDirection: 'row', gap: 12 },
-  quantityInput: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingHorizontal: 16, width: 96 }),
-  quantityInputFull: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingHorizontal: 16, width: '100%' }),
-  unitWrap: { flex: 1, position: 'relative' },
-  unitSelect: { backgroundColor: C.slate50, borderRadius: R.xl, minHeight: 48, paddingRight: 40 },
-  unitText: body({ color: C.slate900, fontSize: 14, fontWeight: '500' }),
-  unitChevron: { position: 'absolute', right: 16, top: 15 },
-  priceWrap: { position: 'relative' },
-  naira: body({ color: C.slate500, fontSize: 16, fontWeight: '500', left: 16, position: 'absolute', top: 16 }),
-  priceInput: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingLeft: 32, paddingRight: 16, width: '100%' }),
-  dateWrap: { position: 'relative' },
-  dateIcon: { left: 16, position: 'absolute', top: 16 },
-  dateInput: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, fontWeight: '500', height: 48, paddingLeft: 40, paddingRight: 16, width: '100%' }),
-  dateHint: body({ color: C.slate400, fontSize: 10, marginLeft: 4, marginTop: 6 }),
-  descriptionInput: body({ backgroundColor: C.slate50, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, color: C.slate900, fontSize: 14, height: 86, paddingHorizontal: 16, paddingVertical: 12, width: '100%' }),
-  aiCard: { backgroundColor: C.farm50, borderColor: C.farm100, borderRadius: R['3xl'], borderWidth: 1, overflow: 'hidden', padding: 20, position: 'relative', ...shadow.sm },
-  aiGradient: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
-  aiSparkles: { opacity: 0.4, position: 'absolute', right: -12, top: -12, transform: [{ rotate: '12deg' }] },
-  aiGlow: { backgroundColor: C.farm200, borderRadius: R.pill, bottom: -40, height: 128, left: -40, opacity: 0.3, position: 'absolute', width: 128 },
-  aiContent: { position: 'relative', zIndex: 10 },
-  aiHeadingRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginBottom: 8 },
-  aiIconWrap: { alignItems: 'center', backgroundColor: C.white, borderColor: C.slate100, borderRadius: R.lg, borderWidth: 1, height: 32, justifyContent: 'center', padding: 6, ...shadow.sm },
-  aiTitle: heading({ color: C.slate900, fontSize: 16, fontWeight: '700' }),
-  aiCopy: body({ color: C.slate600, fontSize: 12, lineHeight: 19.5, marginBottom: 16, paddingRight: 24 }),
-  aiButton: { alignItems: 'center', backgroundColor: C.white, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, flexDirection: 'row', gap: 8, height: 46, justifyContent: 'center', ...shadow.sm },
-  aiButtonText: body({ color: C.slate800, fontSize: 14, fontWeight: '700' }),
-  locationCard: { alignItems: 'flex-start', backgroundColor: 'rgba(241,245,249,0.5)', borderColor: C.slate200, borderRadius: R['2xl'], borderStyle: 'dashed', borderWidth: 1, flexDirection: 'row', gap: 12, padding: 16 },
-  locationIcon: { marginTop: 2 },
-  locationCopy: { flex: 1 },
-  locationTitle: body({ color: C.slate900, fontSize: 14, fontWeight: '600', marginBottom: 2 }),
-  locationText: body({ color: C.slate500, fontSize: 12, lineHeight: 18 }),
-  locationLink: body({ color: C.farm600, fontWeight: '500' }),
-  formActions: { flexDirection: 'row', gap: 12, paddingBottom: 24, paddingTop: 2 },
-  draftButton: { flex: 1, height: 50 },
-  publishButton: { flex: 2, height: 50 },
+  screen: {
+    backgroundColor: colors.cream,
+    flex: 1,
+  },
+  flex: {
+    flex: 1,
+  },
+  topBar: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderBottomColor: colors.line,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
+  topBarBtn: {
+    alignItems: 'center',
+    borderRadius: radii.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  topBarTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 18,
+  },
+  clearBtn: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 52,
+    paddingHorizontal: space.xs,
+  },
+  clearBtnText: {
+    fontFamily: fonts.bodyBold,
+    color: colors.muted,
+    fontSize: 13,
+  },
+  scrollContent: {
+    gap: space.md,
+    padding: space.lg,
+    paddingBottom: 40,
+  },
+  sectionCard: {
+    gap: space.sm,
+  },
+  sectionTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 19,
+  },
+  helperText: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  photoPreviewBox: {
+    borderRadius: radii.md,
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  photoPreview: {
+    height: 190,
+    width: '100%',
+  },
+  removePhotoBtn: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(20, 48, 21, 0.85)',
+    borderRadius: radii.pill,
+    height: 44,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: space.sm,
+    top: space.sm,
+    width: 44,
+  },
+  photoNotice: {
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    padding: space.md,
+  },
+  photoNoticeText: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  photoBtnRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  cropGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+  },
+  cropChip: {
+    alignItems: 'center',
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 44,
+    paddingHorizontal: space.md,
+  },
+  cropChipSelected: {
+    backgroundColor: colors.pine,
+    borderColor: colors.pine,
+  },
+  cropChipText: {
+    fontFamily: fonts.bodyMedium,
+    color: colors.ink,
+    fontSize: 13,
+  },
+  cropChipTextSelected: {
+    color: colors.white,
+  },
+  rowFields: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  lotSummary: {
+    backgroundColor: colors.paleGreen,
+    borderColor: '#CEDBC8',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: space.xs,
+    justifyContent: 'space-between',
+    padding: space.md,
+  },
+  lotSummaryLabel: {
+    ...typeScale.small,
+    color: colors.pine,
+    fontFamily: fonts.bodyMedium,
+  },
+  lotSummaryTotal: {
+    fontFamily: fonts.heading,
+    color: colors.pineDeep,
+    fontSize: 15,
+  },
+  fieldLabel: {
+    fontFamily: fonts.bodyBold,
+    color: colors.ink,
+    fontSize: 13,
+    marginTop: space.xs,
+  },
+  presetRow: {
+    flexDirection: 'row',
+    gap: space.xs,
+  },
+  presetChip: {
+    alignItems: 'center',
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.pill,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  presetChipSelected: {
+    backgroundColor: colors.paleGold,
+    borderColor: colors.gold,
+  },
+  presetText: {
+    fontFamily: fonts.bodyMedium,
+    color: colors.muted,
+    fontSize: 13,
+  },
+  presetTextSelected: {
+    color: colors.goldDeep,
+    fontFamily: fonts.bodyBold,
+  },
+  submitBtn: {
+    marginTop: space.xs,
+  },
+  pressed: {
+    opacity: 0.8,
+  },
 })
