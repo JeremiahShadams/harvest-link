@@ -3,7 +3,7 @@ import { ImageBackground } from 'expo-image'
 import { router } from 'expo-router'
 import { ArrowDownWideNarrow, ArrowRight, MapPin, Search, SlidersHorizontal, Sparkles, X } from 'lucide-react-native'
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppHeader } from './app-header'
 import { OrderSheet } from './order-sheet'
 import { ProductCard } from './product-card'
@@ -28,6 +28,7 @@ import type { Listing } from '@/lib/harvestlink/types'
 const heroImage = require('../../assets/images/harvest-hero.jpg')
 
 export function MarketplaceScreen() {
+  const insets = useSafeAreaInsets()
   const { profile, t } = useHarvestLink()
   const { data: listings, isLoading, isValidating, error, mutate } = useListings()
   const [search, setSearch] = useState('')
@@ -75,7 +76,7 @@ export function MarketplaceScreen() {
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
       <ScrollView
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: 104 + Math.max(14, insets.bottom) }]}
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
