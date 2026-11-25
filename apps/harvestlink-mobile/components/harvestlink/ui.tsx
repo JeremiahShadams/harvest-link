@@ -28,7 +28,7 @@ import Animated, {
   withSpring,
   withTiming,
 } from 'react-native-reanimated'
-import { SafeAreaView } from 'react-native-safe-area-context'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
 
 export const colors = {
@@ -382,9 +382,14 @@ export function ScreenScroll({
   onRefresh?: () => void
   keyboardAvoiding?: boolean
 }) {
+  const insets = useSafeAreaInsets()
   const scroll = (
     <ScrollView
-      contentContainerStyle={[styles.screenContent, contentContainerStyle]}
+      contentContainerStyle={[
+        styles.screenContent,
+        { paddingBottom: 104 + Math.max(14, insets.bottom) },
+        contentContainerStyle,
+      ]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
       refreshControl={
