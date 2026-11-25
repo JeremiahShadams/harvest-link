@@ -1,223 +1,347 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Award, FileDown, Info, PackageCheck } from 'lucide-react-native'
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
-import { useHarvestLink } from '../context'
-import { DesignHeader, DesignScreen, DesignSelect } from './ui'
-import { body, C, heading, R, shadow } from './tokens'
-import { useFarmerListings, useOrders, useScans } from '@/lib/harvestlink/use-data'
-import { computeFarmerSignals } from '@/lib/harvestlink/signals'
-import { useActivityReport } from '@/lib/harvestlink/use-report'
+import { useCallback, useMemo, useState } from 'react'
+import { router } from 'expo-router'
+import { CheckCircle2, Share2, ShieldCheck, Star, TrendingUp } from 'lucide-react-native'
+import { StyleSheet, Text, View } from 'react-native'
+import { AppHeader } from '@/components/harvestlink/app-header'
+import { useHarvestLink } from '@/components/harvestlink/context'
+import {
+  AnimatedEntrance,
+  AppButton,
+  Card,
+  EmptyState,
+  Eyebrow,
+  KeyValueRow,
+  MessageBanner,
+  OrderCardSkeleton,
+  ProgressBar,
+  ScreenScroll,
+  SelectField,
+  SkeletonBox,
+  StatTile,
+  colors,
+  fonts,
+  radii,
+  space,
+  typeScale,
+} from '@/components/harvestlink/ui'
+import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
+import { useActivityReport, useFarmerListings, useOrders, useScans } from '@/lib/harvestlink/use-data'
 import { formatNaira } from '@/lib/harvestlink/utils'
 
-type Range = '30' | '90'
+type PeriodKey = '30d' | '90d' | 'all'
 
-const RANGE_OPTIONS: { value: Range; label: string }[] = [
-  { value: '30', label: 'Last 30 Days' },
-  { value: '90', label: 'Last 90 Days' },
+const PERIOD_OPTIONS: { value: PeriodKey; label: string }[] = [
+  { value: '30d', label: 'Last 30 days' },
+  { value: '90d', label: 'Last 90 days' },
+  { value: 'all', label: 'All recorded activity' },
 ]
 
-const BAR_COLORS = [C.farm100, C.farm200, C.farm300, C.farm400, C.farm500, C.farm600]
+function isWithinPeriod(isoDate: string, period: PeriodKey): boolean {
+  if (period === 'all') return true
+  const createdMs = new Date(isoDate).getTime()
+  if (!Number.isFinite(createdMs)) return true
+  const days = period === '30d' ? 30 : 90
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+  return createdMs >= cutoff
+}
 
-export function MarketplaceSignalsScreen({ showBottomNav = true }: { showBottomNav?: boolean }) {
-  const { user, profile } = useHarvestLink()
-  const { data: listings } = useFarmerListings(user?.id ?? null)
-  const { data: orders } = useOrders(user?.id ?? null)
-  const { data: scans } = useScans(user?.id ?? null)
+export function MarketplaceSignalsScreen() {
+  const { user, profile, t } = useHarvestLink()
+  const ordersResult = useOrders(user?.id ?? null)
+  const listingsResult = useFarmerListings(user?.id ?? null)
+  const scansResult = useScans(user?.id ?? null)
   const report = useActivityReport()
-  const [range, setRange] = useState<Range>('30')
 
-  const signals = useMemo(() => {
-    if (!user) return null
-    return computeFarmerSignals({
-      userId: user.id,
-      listings: listings ?? [],
-      orders: orders ?? [],
-      scans: scans ?? [],
-      days: range === '90' ? 90 : 30,
-    })
-  }, [listings, orders, range, scans, user])
+  const [period, setPeriod] = useState<PeriodKey>('30d')
+  const [refreshing, setRefreshing] = useState(false)
 
-  useEffect(() => {
-    if (report.message) Alert.alert('Activity report', report.message)
-  }, [report.message])
+  const handleRefresh = useCallback(async () => {
+    triggerSelectionHaptic()
+    setRefreshing(true)
+    await Promise.all([ordersResult.mutate(), listingsResult.mutate(), scansResult.mutate()])
+    setRefreshing(false)
+  }, [listingsResult, ordersResult, scansResult])
 
-  const score = signals?.activityScore ?? 0
-  const deliveryRate = signals?.deliveryRate ?? 0
-  const consistency = signals?.consistency ?? 0
-  const sales = signals?.salesValue ?? 0
-  const listingsCreated = signals?.listingsCreated ?? 0
-  const ordersCompleted = signals?.ordersDelivered ?? 0
-  const scansCompleted = signals?.scansCompleted ?? 0
-  const weeklySales = signals?.weeklySales ?? []
-  const maxSales = weeklySales.reduce((max, week) => Math.max(max, week.value), 0)
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
-  const location = profile?.default_area || 'Add your area in your profile'
+  const farmerOrders = useMemo(
+    () =>
+      (ordersResult.data ?? []).filter(
+        (order) => order.farmer_id === user?.id && isWithinPeriod(order.created_at, period),
+      ),
+    [ordersResult.data, period, user?.id],
+  )
+
+  const filteredScans = useMemo(
+    () => (scansResult.data ?? []).filter((scan) => isWithinPeriod(scan.created_at, period)),
+    [period, scansResult.data],
+  )
+
+  const deliveredOrders = useMemo(
+    () => farmerOrders.filter((order) => order.status === 'delivered'),
+    [farmerOrders],
+  )
+
+  const totalRevenue = useMemo(
+    () =>
+      deliveredOrders.reduce(
+        (sum, order) => sum + Number(order.quantity_kg) * Number(order.unit_price_per_kg),
+        0,
+      ),
+    [deliveredOrders],
+  )
+
+  const fulfillmentRate = useMemo(() => {
+    if (farmerOrders.length === 0) return 0
+    return Math.round((deliveredOrders.length / farmerOrders.length) * 100)
+  }, [deliveredOrders.length, farmerOrders.length])
+
+  const averageRating = useMemo(() => {
+    const rated = deliveredOrders.filter((order) => typeof order.rating === 'number' && order.rating > 0)
+    if (rated.length === 0) return null
+    const sum = rated.reduce((acc, order) => acc + Number(order.rating), 0)
+    return { value: (sum / rated.length).toFixed(1), count: rated.length }
+  }, [deliveredOrders])
+
+  const cropSummary = useMemo(() => {
+    const byCrop = new Map<string, { orders: number; revenue: number }>()
+    for (const order of deliveredOrders) {
+      const crop = order.listing?.crop ?? 'Harvest lot'
+      const prev = byCrop.get(crop) ?? { orders: 0, revenue: 0 }
+      byCrop.set(crop, {
+        orders: prev.orders + 1,
+        revenue: prev.revenue + Number(order.quantity_kg) * Number(order.unit_price_per_kg),
+      })
+    }
+    return [...byCrop.entries()].sort((a, b) => b[1].revenue - a[1].revenue)
+  }, [deliveredOrders])
+
+  const activeListingCount = useMemo(
+    () => (listingsResult.data ?? []).filter((item) => item.status === 'active' && Number(item.available_kg) > 0).length,
+    [listingsResult.data],
+  )
+
+  const isLoading = Boolean(
+    user &&
+      ((ordersResult.isLoading && !ordersResult.data) || (listingsResult.isLoading && !listingsResult.data)),
+  )
 
   return (
-    <DesignScreen
-      activeTab="signals"
-      showBottomNav={showBottomNav}
-      header={<DesignHeader userName={userName} location={location} />}
-      contentStyle={[styles.content, !showBottomNav && styles.contentWithoutNav]}
-    >
-      <View style={styles.titleBlock}>
-        <Text style={styles.pageTitle}>Marketplace Signals</Text>
-        <Text style={styles.pageSubtitle}>
-          Building your track record. These metrics support your financial credibility.
-        </Text>
-      </View>
+    <ScreenScroll onRefresh={handleRefresh} refreshing={refreshing}>
+      <AppHeader />
 
-      <View style={styles.scoreCard}>
-        <View style={styles.scoreGlow} />
-        <View style={styles.scoreHeader}>
-          <View>
-            <Text style={styles.scoreLabel}>Consistency Score</Text>
-            <View style={styles.scoreValueRow}>
-              <Text style={styles.scoreValue}>{score}</Text>
-              <Text style={styles.scoreOutOf}>/100</Text>
+      <AnimatedEntrance delay={20}>
+        <View style={styles.intro}>
+          <Eyebrow>VERIFIED TRADE HISTORY</Eyebrow>
+          <Text style={styles.title}>{t('signalsTitle')}</Text>
+          <Text style={styles.subtitle}>{t('signalsSubtitle')}</Text>
+        </View>
+      </AnimatedEntrance>
+
+      {!user ? (
+        <EmptyState
+          title="Sign in to view your market record"
+          message="Your completed orders, freshness scans, and co-op shareable reports appear once you sign in."
+          action={<AppButton label="Sign in" onPress={() => router.push('/profile')} />}
+        />
+      ) : isLoading ? (
+        <View style={styles.gapMd}>
+          <View style={styles.statsRow}>
+            <View style={styles.statSkeleton}>
+              <SkeletonBox height={26} width="60%" />
+              <SkeletonBox height={14} width="75%" />
+            </View>
+            <View style={styles.statSkeleton}>
+              <SkeletonBox height={26} width="60%" />
+              <SkeletonBox height={14} width="75%" />
             </View>
           </View>
-          <View style={styles.awardWrap}><Award color={C.farm600} size={24} /></View>
+          <OrderCardSkeleton />
+          <OrderCardSkeleton />
         </View>
-        <View style={styles.metricGrid}>
-          <View style={styles.metricTile}>
-            <View style={styles.metricLabelRow}>
-              <PackageCheck color={C.slate400} size={16} />
-              <Text style={styles.metricLabel}>Delivery Rate</Text>
-            </View>
-            <Text style={styles.metricValue}>{deliveryRate}%</Text>
-          </View>
-          <View style={styles.metricTile}>
-            <View style={styles.metricLabelRow}>
-              <Info color={C.slate400} size={16} />
-              <Text style={styles.metricLabel}>Consistency</Text>
-            </View>
-            <Text style={styles.metricValue}>{consistency}%</Text>
-          </View>
-        </View>
-      </View>
+      ) : (
+        <>
+          <AnimatedEntrance delay={50}>
+            <SelectField
+              label="Activity window"
+              onChange={setPeriod}
+              options={PERIOD_OPTIONS}
+              value={period}
+            />
+          </AnimatedEntrance>
 
-      <View style={styles.activityCard}>
-        <View style={styles.activityHeader}>
-          <Text style={styles.sectionTitle}>Activity ({Number(range)} Days)</Text>
-          <DesignSelect
-            accessibilityLabel="Activity date range"
-            onChange={(next) => setRange(next)}
-            options={RANGE_OPTIONS}
-            style={styles.rangeSelect}
-            textStyle={styles.rangeText}
-            value={range}
-          />
-        </View>
-
-        <View style={styles.salesBlock}>
-          <View style={styles.salesLabelRow}>
-            <Text style={styles.salesLabel}>Sales Volume</Text>
-            <Text style={styles.salesValue}>{formatNaira(sales)}</Text>
-          </View>
-          <View style={styles.barChart}>
-            {maxSales > 0 ? weeklySales.map((week, index) => (
-              <View
-                key={week.weekStart}
-                accessibilityLabel={`${week.label}: ${formatNaira(week.value)}`}
-                style={[
-                  styles.bar,
-                  {
-                    backgroundColor: BAR_COLORS[index % BAR_COLORS.length],
-                    height: `${Math.max(4, Math.round((week.value / maxSales) * 100))}%`,
-                  },
-                ]}
+          <AnimatedEntrance delay={80}>
+            <View style={styles.statsRow}>
+              <StatTile
+                hint={`${deliveredOrders.length} settled`}
+                label="Settled Sales"
+                tone="green"
+                value={formatNaira(totalRevenue)}
               />
-            )) : (
-              <Text style={styles.sectionSubtitle}>No delivered-order sales yet.</Text>
-            )}
-          </View>
-        </View>
+              <StatTile
+                hint={`${activeListingCount} live on market`}
+                label="Freshness Scans"
+                tone="gold"
+                value={filteredScans.length}
+              />
+            </View>
+          </AnimatedEntrance>
 
-        <View style={styles.activityStats}>
-          <View style={styles.activityRow}>
-            <Text style={styles.activityLabel}>Listings Created</Text>
-            <Text style={styles.activityValue}>{listingsCreated}</Text>
-          </View>
-          <View style={styles.activityRow}>
-            <Text style={styles.activityLabel}>Orders Completed</Text>
-            <Text style={styles.activityValue}>{ordersCompleted}</Text>
-          </View>
-          <View style={styles.activityRow}>
-            <Text style={styles.activityLabel}>Quality Scans</Text>
-            <Text style={styles.activityValue}>{scansCompleted}</Text>
-          </View>
-        </View>
-      </View>
+          <AnimatedEntrance delay={120}>
+            <Card style={styles.sectionCard}>
+              <View style={styles.metricHeader}>
+                <View style={styles.metricCopy}>
+                  <Eyebrow>FULFILLMENT RELIABILITY</Eyebrow>
+                  <Text style={styles.cardTitle}>
+                    {farmerOrders.length > 0 ? `${fulfillmentRate}% orders delivered` : 'No orders in this window'}
+                  </Text>
+                </View>
+                <CheckCircle2 color={colors.pine} size={22} />
+              </View>
+              <ProgressBar tone="leaf" value={fulfillmentRate} />
+              <View style={styles.kvGroup}>
+                <KeyValueRow label="Total buyer requests" value={farmerOrders.length} />
+                <KeyValueRow label="Delivered orders" value={deliveredOrders.length} />
+                <KeyValueRow
+                  label="Buyer quality rating"
+                  value={averageRating ? `${averageRating.value} / 5 (${averageRating.count})` : 'No ratings yet'}
+                />
+              </View>
+            </Card>
+          </AnimatedEntrance>
 
-      <View style={styles.reportSection}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Generate Activity Report"
-          disabled={report.busy}
-          onPress={() => void report.create()}
-          style={({ pressed }) => [styles.reportButton, pressed && styles.pressed]}
-        >
-          <FileDown color={C.white} size={18} />
-          <Text style={styles.reportButtonText}>Generate Activity Report</Text>
-        </Pressable>
-        <Text style={styles.reportCaption}>
-          Shareable PDF summarizing your marketplace activity for cooperatives and financial institutions.
-        </Text>
-      </View>
-    </DesignScreen>
+          <AnimatedEntrance delay={160}>
+            <Card style={styles.sectionCard}>
+              <View style={styles.metricHeader}>
+                <View style={styles.metricCopy}>
+                  <Eyebrow>BY PRODUCE LINE</Eyebrow>
+                  <Text style={styles.cardTitle}>Completed crop volume</Text>
+                </View>
+                <TrendingUp color={colors.leaf} size={22} />
+              </View>
+              {cropSummary.length === 0 ? (
+                <Text style={styles.helperText}>
+                  No delivered crop lots in this window yet. Completed orders automatically populate here.
+                </Text>
+              ) : (
+                <View style={styles.kvGroup}>
+                  {cropSummary.map(([cropName, metrics]) => (
+                    <KeyValueRow
+                      key={cropName}
+                      emphasis
+                      label={`${cropName} (${metrics.orders} ${metrics.orders === 1 ? 'order' : 'orders'})`}
+                      value={formatNaira(metrics.revenue)}
+                    />
+                  ))}
+                </View>
+              )}
+            </Card>
+          </AnimatedEntrance>
+
+          <AnimatedEntrance delay={200}>
+            <Card style={styles.reportCard}>
+              <View style={styles.reportHead}>
+                <View style={styles.reportIcon}>
+                  <ShieldCheck color={colors.pine} size={22} />
+                </View>
+                <View style={styles.metricCopy}>
+                  <Text style={styles.cardTitle}>Shareable Co-op Report</Text>
+                  <Text style={styles.helperText}>
+                    Generates a signed private link summarizing real orders for {profile?.farm_name || profile?.display_name || 'your farm'}. Supporting trade record only — not a credit guarantee.
+                  </Text>
+                </View>
+              </View>
+
+              {report.message ? <MessageBanner tone="info">{report.message}</MessageBanner> : null}
+
+              <AppButton
+                icon={report.url ? <Share2 color={colors.white} size={18} /> : <Star color={colors.white} size={18} />}
+                label={report.busy ? 'Preparing link…' : report.url ? 'Share Activity Report' : t('generateReport')}
+                loading={report.busy}
+                onPress={() => (report.url ? void report.share(report.url) : void report.create())}
+              />
+            </Card>
+          </AnimatedEntrance>
+        </>
+      )}
+    </ScreenScroll>
   )
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 24, paddingBottom: 112, paddingHorizontal: 20, paddingTop: 16 },
-  contentWithoutNav: { paddingBottom: 24 },
-  pressed: { transform: [{ scale: 0.98 }] },
-  titleBlock: { marginBottom: 8 },
-  pageTitle: heading({ color: C.slate900, fontSize: 24, fontWeight: '700' }),
-  pageSubtitle: body({ color: C.slate500, fontSize: 14, lineHeight: 20, marginTop: 4 }),
-  scoreCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['3xl'], borderWidth: 1, overflow: 'hidden', padding: 20, ...shadow.sm },
-  scoreGlow: { backgroundColor: C.farm50, borderRadius: R.pill, height: 160, opacity: 0.6, position: 'absolute', right: -40, top: -40, width: 160 },
-  scoreHeader: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 24, position: 'relative', zIndex: 1 },
-  scoreLabel: body({ color: C.slate500, fontSize: 12, fontWeight: '600', letterSpacing: 0.6, marginBottom: 4, textTransform: 'uppercase' }),
-  scoreValueRow: { alignItems: 'baseline', flexDirection: 'row', gap: 8 },
-  scoreValue: heading({ color: C.farm800, fontSize: 48, fontWeight: '700', lineHeight: 48 }),
-  scoreOutOf: body({ color: C.slate400, fontSize: 18, fontWeight: '500' }),
-  awardWrap: { alignItems: 'center', backgroundColor: C.farm50, borderRadius: R.pill, height: 48, justifyContent: 'center', width: 48 },
-  metricGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, position: 'relative', zIndex: 1 },
-  metricTile: { backgroundColor: C.slate50, borderRadius: R['2xl'], flexBasis: '47%', flexGrow: 1, padding: 14 },
-  metricLabelRow: { alignItems: 'center', flexDirection: 'row', gap: 6, marginBottom: 4 },
-  metricLabel: body({ color: C.slate500, fontSize: 12, fontWeight: '500' }),
-  metricValue: heading({ color: C.slate900, fontSize: 20, fontWeight: '700' }),
-  trustSection: { gap: 16 },
-  trustHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  sectionTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
-  sectionSubtitle: body({ color: C.slate500, fontSize: 12, lineHeight: 18 }),
-  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  badge: { alignItems: 'center', borderRadius: R.xl, borderWidth: 1, flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  badgeVerified: { backgroundColor: C.farm50, borderColor: C.farm100 },
-  badgeFast: { backgroundColor: C.amber50, borderColor: C.amber100 },
-  badgeRating: { backgroundColor: C.blue50, borderColor: C.blue100 },
-  badgeText: body({ fontSize: 14, fontWeight: '600' }),
-  badgeTextVerified: { color: C.farm800 },
-  badgeTextFast: { color: C.amber700 },
-  badgeTextRating: { color: C.blue700 },
-  activityCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['3xl'], borderWidth: 1, padding: 20, ...shadow.sm },
-  activityHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  rangeSelect: { backgroundColor: C.slate50, borderRadius: R.lg, minHeight: 26, paddingHorizontal: 8, paddingRight: 28, width: 108 },
-  rangeText: body({ color: C.slate600, fontSize: 12, fontWeight: '400' }),
-  salesBlock: {},
-  salesLabelRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  salesLabel: body({ color: C.slate700, fontSize: 14, fontWeight: '500' }),
-  salesValue: body({ color: C.slate900, fontSize: 16, fontWeight: '700' }),
-  barChart: { alignItems: 'flex-end', flexDirection: 'row', gap: 4, height: 48 },
-  bar: { borderTopLeftRadius: 2, borderTopRightRadius: 2, flex: 1 },
-  activityStats: { borderTopColor: C.slate100, borderTopWidth: 1, gap: 12, marginTop: 20, paddingTop: 16 },
-  activityRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  activityLabel: body({ color: C.slate600, fontSize: 14 }),
-  activityValue: body({ color: C.slate900, fontSize: 16, fontWeight: '600' }),
-  reportSection: { gap: 12, paddingTop: 8 },
-  reportButton: { alignItems: 'center', backgroundColor: C.farm800, borderRadius: R.xl, flexDirection: 'row', gap: 8, height: 48, justifyContent: 'center', ...shadow.action },
-  reportButtonText: body({ color: C.white, fontSize: 14, fontWeight: '700' }),
-  reportCaption: body({ color: C.slate500, fontSize: 12, lineHeight: 16, paddingHorizontal: 16, textAlign: 'center' }),
+  intro: {
+    gap: space.xs,
+    marginBottom: space.md,
+  },
+  title: {
+    ...typeScale.display,
+    color: colors.pineDeep,
+  },
+  subtitle: {
+    ...typeScale.body,
+    color: colors.muted,
+  },
+  gapMd: {
+    gap: space.md,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    marginBottom: space.md,
+  },
+  statSkeleton: {
+    backgroundColor: colors.white,
+    borderColor: colors.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flex: 1,
+    gap: space.sm,
+    padding: space.md,
+  },
+  sectionCard: {
+    gap: space.sm,
+    marginBottom: space.md,
+  },
+  metricHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: space.md,
+    justifyContent: 'space-between',
+  },
+  metricCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  cardTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 18,
+  },
+  kvGroup: {
+    borderTopColor: colors.line,
+    borderTopWidth: 1,
+    gap: space.xs,
+    marginTop: space.xs,
+    paddingTop: space.sm,
+  },
+  helperText: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  reportCard: {
+    backgroundColor: colors.paleGreen,
+    borderColor: '#CEDBC8',
+    gap: space.md,
+  },
+  reportHead: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: space.md,
+  },
+  reportIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderRadius: radii.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
 })
