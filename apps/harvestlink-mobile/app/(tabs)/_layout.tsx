@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useHarvestLink } from '@/components/harvestlink/context'
 import { colors, fonts } from '@/components/harvestlink/ui'
+import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
 import { useOrders } from '@/lib/harvestlink/use-data'
 
 export default function TabLayout() {
@@ -29,17 +30,48 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      screenListeners={{
+        tabPress: () => {
+          triggerSelectionHaptic()
+        },
+      }}
       screenOptions={{
         headerShown: false,
+        tabBarLabelPosition: 'below-icon',
         tabBarActiveTintColor: colors.pine,
         tabBarInactiveTintColor: colors.muted,
+        tabBarActiveBackgroundColor: colors.paleGreen,
         tabBarStyle: {
-          backgroundColor: colors.white,
-          borderTopColor: colors.line,
+          position: 'absolute',
+          bottom: Math.max(14, insets.bottom),
+          start: 16,
+          end: 16,
+          left: 16,
+          right: 16,
+          height: 68,
+          paddingTop: 6,
+          paddingBottom: 6,
+          paddingHorizontal: 6,
+          backgroundColor: 'rgba(255, 255, 255, 0.96)',
+          borderRadius: 28,
+          borderCurve: 'continuous',
+          borderWidth: 1,
           borderTopWidth: 1,
-          height: 62 + Math.max(12, insets.bottom),
-          paddingBottom: Math.max(12, insets.bottom),
-          paddingTop: 8,
+          borderColor: colors.line,
+          borderTopColor: colors.line,
+          shadowColor: colors.pineDeep,
+          shadowOffset: { width: 0, height: 10 },
+          shadowOpacity: 0.12,
+          shadowRadius: 20,
+          elevation: 12,
+        },
+        tabBarItemStyle: {
+          borderRadius: 20,
+          borderCurve: 'continuous',
+          marginHorizontal: 2,
+          marginVertical: 2,
+          paddingVertical: 3,
+          minHeight: 48,
         },
         tabBarLabelStyle: {
           fontFamily: fonts.bodyBold,
