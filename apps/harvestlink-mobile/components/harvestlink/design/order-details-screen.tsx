@@ -1,387 +1,608 @@
-import { useMemo } from 'react'
-import { router, useLocalSearchParams } from 'expo-router'
+import { useCallback, useState } from 'react'
 import { Image } from 'expo-image'
+import { router, useLocalSearchParams } from 'expo-router'
 import {
   ArrowLeft,
-  CalendarClock,
-  CheckCircle2,
-  Clock4,
-  Map,
-  MapPin,
+  Check,
   MessageCircle,
-  ScanLine,
+  Phone,
+  Star,
 } from 'lucide-react-native'
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useHarvestLink } from '../context'
-import { DesignButton, DesignHeader, DesignScreen } from './ui'
-import { body, C, heading, R, shadow } from './tokens'
-import { useOrders } from '@/lib/harvestlink/use-data'
-import { useAdvanceOrder } from '@/lib/harvestlink/use-mutations'
-import { formatNaira, formatQuantity, getListingImageUrl, nextOrderStatus } from '@/lib/harvestlink/utils'
-import { STATUS_LABELS, type HarvestOrder } from '@/lib/harvestlink/types'
+import {
+  KeyboardAvoidingView,
+  Linking,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native'
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useHarvestLink } from '@/components/harvestlink/context'
+import {
+  AnimatedEntrance,
+  AppButton,
+  Card,
+  EmptyState,
+  Eyebrow,
+  KeyValueRow,
+  MessageBanner,
+  OrderCardSkeleton,
+  StatusBadge,
+  TextField,
+  colors,
+  fonts,
+  radii,
+  space,
+  typeScale,
+} from '@/components/harvestlink/ui'
+import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
+import { listingImage } from '@/lib/harvestlink/images'
+import {
+  ORDER_STATUSES,
+  ORDER_TIMELINE_STEPS,
+  STATUS_LABELS,
+  type HarvestOrder,
+} from '@/lib/harvestlink/types'
+import { useAdvanceOrder, useOrders, useRateOrder } from '@/lib/harvestlink/use-data'
+import {
+  buildPhoneLink,
+  buildWhatsAppLink,
+  formatDate,
+  formatNaira,
+  formatUnitCount,
+  formatUnitSingular,
+  nextOrderStatus,
+} from '@/lib/harvestlink/utils'
 
-type DisplayItem = {
-  id: string
-  name: string
-  amount: string
-  meta: string
-  image: string | null
+function actionLabel(nextStatus: HarvestOrder['status']) {
+  if (nextStatus === 'accepted') return 'Accept Order'
+  if (nextStatus === 'ready') return 'Mark Ready for Pickup'
+  if (nextStatus === 'out_for_delivery') return 'Dispatch for Delivery'
+  return 'Confirm Delivered'
 }
 
-const TIMELINE = [
-  { title: 'Order Pending', subtitle: 'Waiting for your acceptance.' },
-  { title: 'Order Accepted' },
-  { title: 'Ready for Pickup' },
-  { title: 'Delivered' },
-] as const
-
-export function OrderDetailsScreen() {
-  const params = useLocalSearchParams<{ id?: string | string[] }>()
-  const routeId = Array.isArray(params.id) ? params.id[0] : params.id
-  const { user, profile } = useHarvestLink()
-  const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
-  const { advanceOrder, busy } = useAdvanceOrder()
+export function OrderDetailsScreen({ orderId: propOrderId }: { orderId?: string }) {
+  const { id } = useLocalSearchParams<{ id?: string | string[] }>()
+  const orderId = propOrderId ?? (Array.isArray(id) ? id[0] : id) ?? ''
   const insets = useSafeAreaInsets()
+  const { user } = useHarvestLink()
+  const ordersResult = useOrders(user?.id ?? null)
+  const { advanceOrder, busy, error, setError } = useAdvanceOrder()
+  const { rateOrder, busy: ratingBusy, error: ratingError } = useRateOrder()
 
-  const order = useMemo(
-    () => (orders ?? []).find((candidate) => candidate.id === routeId) ?? null,
-    [orders, routeId],
+  const [refreshing, setRefreshing] = useState(false)
+  const [contactError, setContactError] = useState<string | null>(null)
+  const [selectedRating, setSelectedRating] = useState(5)
+  const [ratingNote, setRatingNote] = useState('')
+
+  const handleRefresh = useCallback(async () => {
+    triggerSelectionHaptic()
+    setRefreshing(true)
+    await ordersResult.mutate()
+    setRefreshing(false)
+  }, [ordersResult])
+
+  const order = ordersResult.data?.find((item) => item.id === orderId) ?? null
+  const isFarmer = Boolean(user && order && order.farmer_id === user.id)
+  const isBuyer = Boolean(user && order && order.buyer_id === user.id)
+  const nextStatus = order && isFarmer ? nextOrderStatus(order.status) : null
+  const currentStepIdx = order ? Math.max(0, ORDER_STATUSES.indexOf(order.status)) : 0
+
+  const counterpartyName = order
+    ? isFarmer
+      ? order.contact?.buyer_name || 'Buyer'
+      : order.contact?.farmer_name || order.listing?.farm_name || 'Farmer'
+    : ''
+  const counterpartyPhone = order
+    ? isFarmer
+      ? order.contact?.buyer_phone
+      : order.contact?.farmer_phone
+    : null
+  const phoneUrl = buildPhoneLink(counterpartyPhone)
+  const whatsAppUrl = buildWhatsAppLink(
+    counterpartyPhone,
+    order
+      ? `Hello ${counterpartyName}, following up on HarvestLink order #${order.id.slice(0, 6)} for ${order.listing?.crop ?? 'produce'}.`
+      : undefined,
   )
 
-  const goBack = () => {
-    if (router.canGoBack()) router.back()
-    else router.navigate('/orders' as never)
-  }
-
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
-  const location = profile?.default_area ?? ''
-  const header = <DesignHeader userName={userName} location={location} />
-
-  if (isLoading && !order) {
-    return (
-      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
-        <View style={styles.messageCard}>
-          <Text style={styles.messageTitle}>Loading this order…</Text>
-        </View>
-      </DesignScreen>
-    )
-  }
-
-  if (error && !order) {
-    return (
-      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
-        <View style={styles.messageCard}>
-          <Text style={styles.messageTitle}>We couldn’t load this order.</Text>
-          <Text style={styles.messageBody}>Check your connection and try again from your orders list.</Text>
-          <DesignButton label="Back to Orders" onPress={goBack} variant="secondary" style={styles.messageCta} />
-        </View>
-      </DesignScreen>
-    )
-  }
-
-  if (!order) {
-    return (
-      <DesignScreen activeTab="orders" header={header} contentStyle={styles.content}>
-        <View style={styles.messageCard}>
-          <Text style={styles.messageTitle}>This order isn’t available.</Text>
-          <Text style={styles.messageBody}>It may have been removed, or it isn’t part of your account. Return to your orders and choose another one.</Text>
-          <DesignButton label="Back to Orders" onPress={goBack} style={styles.messageButton} />
-        </View>
-      </DesignScreen>
-    )
-  }
-
-  const displayId = shortId(order.id)
-  const status = order.status
-  const statusIndex = statusIndexFor(status)
-  const nextStatus = nextOrderStatus(status)
-
-  const items: DisplayItem[] = [{
-    id: order.id,
-    name: order.listing?.crop ?? 'Produce details unavailable',
-    amount: formatNaira(Number(order.quantity_kg) * Number(order.unit_price_per_kg)),
-    meta: `${formatQuantity(order.quantity_kg)} kg • ${formatNaira(order.unit_price_per_kg)}/kg`,
-    image: getListingImageUrl({ image_url: order.listing?.image_url ?? '' }),
-  }]
-
-  const subtotal = Number(order.quantity_kg) * Number(order.unit_price_per_kg)
-  const placedAt = `Placed ${formatDateTime(order.created_at)}`
-  const deliveryArea = order.delivery_area || 'Not provided'
-  const deliveryWindow = order.delivery_window || 'Not provided'
-
-  const acceptOrder = async () => {
-    if (!user) {
-      Alert.alert('Sign in required', 'Sign in before updating an order.')
+  async function openContactUrl(url: string | null) {
+    setContactError(null)
+    if (!url) {
+      setContactError('No phone number is available for this counterparty yet.')
       return
     }
-    if (!nextStatus) {
-      Alert.alert('Order already complete', 'This order has reached its final status.')
-      return
+    try {
+      await Linking.openURL(url)
+    } catch {
+      setContactError('Could not open that contact app on this device.')
     }
-    const result = await advanceOrder(order.id, nextStatus)
-    if (!result.success) {
-      Alert.alert('Order not updated', result.error ?? 'We couldn’t save that status change. Refresh and try again.')
-      return
-    }
-    Alert.alert('Order updated', `Status is now ${STATUS_LABELS[nextStatus].toLowerCase()}.`)
   }
 
-  const declineOrder = () => {
-    Alert.alert(
-      'Decline not supported',
-      'The current HarvestLink backend has no declined-order status, so this order was left unchanged.',
-    )
+  async function handleAdvance() {
+    if (!order || !nextStatus) return
+    setError(null)
+    await advanceOrder(order.id, nextStatus)
   }
 
-  const actionLabel = !nextStatus
-    ? 'Order complete'
-    : busy
-      ? 'Updating…'
-      : status === 'pending'
-        ? 'Accept Order'
-        : `Mark ${STATUS_LABELS[nextStatus]}`
+  async function handleSubmitRating() {
+    if (!order) return
+    await rateOrder(order.id, selectedRating, ratingNote)
+  }
+
+  const cropName = order?.listing?.crop ?? 'Harvest Order'
+  const totalAmount = order ? Number(order.quantity_kg) * Number(order.unit_price_per_kg) : 0
 
   return (
-    <DesignScreen
-      activeTab="orders"
-      header={header}
-      contentStyle={styles.content}
-    >
-      <Pressable accessibilityRole="button" accessibilityLabel="Back to Orders" onPress={goBack} style={styles.backRow}>
-        <ArrowLeft color={C.slate500} size={14} />
-        <Text style={styles.backText}>Back to Orders</Text>
-      </Pressable>
-
-      <View style={styles.orderHeading}>
-        <View>
-          <Text style={styles.orderTitle}>Order #{displayId}</Text>
-          <Text style={styles.orderDate}>{placedAt}</Text>
-        </View>
-        <View style={[styles.statusBadge, status === 'delivered' ? styles.statusDelivered : styles.statusPending]}>
-          {status === 'pending' ? <Clock4 color={C.amber600} size={11} /> : <CheckCircle2 color={C.farm700} size={12} />}
-          <Text style={[styles.statusText, status === 'delivered' ? styles.statusTextDelivered : styles.statusTextPending]}>
-            {STATUS_LABELS[status].toUpperCase()}
-          </Text>
-        </View>
+    <SafeAreaView edges={['top']} style={styles.screen}>
+      <View style={styles.topBar}>
+        <Pressable
+          accessibilityLabel="Back"
+          accessibilityRole="button"
+          hitSlop={8}
+          onPress={() => router.back()}
+          style={({ pressed }) => [styles.topBarBtn, pressed && styles.pressed]}
+        >
+          <ArrowLeft color={colors.pine} size={22} />
+        </Pressable>
+        <Text style={styles.topBarTitle}>Order #{orderId.slice(0, 8)}</Text>
+        <View style={styles.topBarSpacer} />
       </View>
 
-      <View style={styles.buyerCard}>
-        <View style={styles.buyerRow}>
-          <View style={styles.buyerIdentity}>
-            <View style={styles.buyerInitial}>
-              <Text style={styles.buyerInitialText}>{shortId(order.buyer_id).slice(0, 1)}</Text>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.flex}>
+        <ScrollView
+          contentContainerStyle={[
+            styles.scrollContent,
+            nextStatus ? styles.scrollContentWithBar : { paddingBottom: Math.max(32, insets.bottom + 20) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={
+            <RefreshControl
+              colors={[colors.pine]}
+              onRefresh={handleRefresh}
+              refreshing={refreshing}
+              tintColor={colors.pine}
+            />
+          }
+          showsVerticalScrollIndicator={false}
+        >
+          {!user ? (
+            <EmptyState
+              title="Sign in to view orders"
+              message="Order details are private to the buyer and farmer on the transaction."
+              action={<AppButton label="Sign in" onPress={() => router.replace('/profile')} />}
+            />
+          ) : ordersResult.isLoading && !ordersResult.data ? (
+            <View style={styles.skeletonWrap}>
+              <OrderCardSkeleton />
+              <OrderCardSkeleton />
             </View>
-            <View>
-              <Text style={styles.buyerName}>Buyer {shortId(order.buyer_id)}</Text>
-              <View style={styles.buyerLocationRow}>
-                <MapPin color={C.slate500} size={11} />
-                <Text style={styles.buyerLocation}>{deliveryArea}</Text>
-              </View>
-            </View>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Message buyer"
-            onPress={() => router.push('/chats' as never)}
-            style={({ pressed }) => [styles.messageButton, pressed && styles.pressed]}
-          >
-            <MessageCircle color={C.farm700} size={18} />
-          </Pressable>
-        </View>
-      </View>
+          ) : !order ? (
+            <EmptyState
+              title="Order not found"
+              message="This order could not be found on your account. Pull down to refresh or return to your orders list."
+              action={<AppButton label="Back to Orders" onPress={() => router.replace('/orders')} />}
+            />
+          ) : (
+            <>
+              <AnimatedEntrance delay={20}>
+                <Card style={styles.summaryCard}>
+                  <View style={styles.summaryHead}>
+                    <Image
+                      contentFit="cover"
+                      source={listingImage({
+                        category: order.listing?.category ?? 'Other',
+                        crop: cropName,
+                        image_url: order.listing?.image_url ?? '',
+                      })}
+                      style={styles.thumb}
+                    />
+                    <View style={styles.summaryCopy}>
+                      <Eyebrow>{order.listing?.farm_name || 'Harvest lot'}</Eyebrow>
+                      <Text style={styles.cropTitle}>{cropName}</Text>
+                      <Text style={styles.qtySub}>
+                        {formatUnitCount(order.quantity_kg, order.unit)} · {formatNaira(order.unit_price_per_kg)} /{' '}
+                        {formatUnitSingular(order.unit)}
+                      </Text>
+                      <View style={styles.badgeWrap}>
+                        <StatusBadge
+                          label={STATUS_LABELS[order.status]}
+                          tone={order.status === 'delivered' ? 'green' : order.status === 'pending' ? 'gold' : 'gray'}
+                        />
+                      </View>
+                    </View>
+                  </View>
 
-      <View style={styles.timelineCard}>
-        <Text style={styles.cardTitle}>Order Status</Text>
-        <View style={styles.timeline}>
-          <View style={styles.timelineLine} />
-          {TIMELINE.map((step, index) => {
-            const active = index === statusIndex
-            const past = index < statusIndex
-            return (
-              <View
-                key={step.title}
-                style={[styles.timelineStep, index < TIMELINE.length - 1 && styles.timelineStepGap, index > statusIndex && styles.timelineStepFuture]}
-              >
-                <View style={styles.timelineDotSlot}>
-                  {active ? <View style={styles.timelineDotRing} /> : null}
-                  <View style={[
-                    styles.timelineDot,
-                    active ? styles.timelineDotActive : past ? styles.timelineDotPast : styles.timelineDotFuture,
-                    !active && styles.timelineDotSmall,
-                  ]} />
-                </View>
-                <View>
-                  <Text style={[styles.timelineTitle, index > statusIndex && styles.timelineTitleFuture]}>{step.title}</Text>
-                  {'subtitle' in step && step.subtitle ? <Text style={styles.timelineSubtitle}>{step.subtitle}</Text> : null}
-                </View>
-              </View>
-            )
-          })}
-        </View>
-      </View>
+                  <View style={styles.kvGroup}>
+                    <KeyValueRow emphasis label="Order total" value={formatNaira(totalAmount)} />
+                    <KeyValueRow label="Delivery window" value={order.delivery_window} />
+                    <KeyValueRow label="Delivery zone" value={order.delivery_area} />
+                    <KeyValueRow label="Placed on" value={formatDate(order.created_at)} />
+                  </View>
 
-      <View style={styles.itemsCard}>
-        <View style={styles.itemsHeader}><Text style={styles.itemsTitle}>Order Items</Text></View>
-        <View style={styles.itemsBody}>
-          {items.map((item, index) => (
-            <View key={item.id} style={[styles.itemRow, index < items.length - 1 && styles.itemRowBorder]}>
-              <View style={styles.itemImageWrap}>
-                {item.image ? (
-                  <Image source={{ uri: item.image }} style={styles.itemImage} contentFit="cover" />
-                ) : (
-                  <View style={styles.itemImagePlaceholder}><ScanLine color={C.slate400} size={22} /></View>
-                )}
-              </View>
-              <View style={styles.itemCopy}>
-                <View style={styles.itemTitleRow}>
-                  <Text style={styles.itemTitle} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.itemAmount}>{item.amount}</Text>
-                </View>
-                <Text style={styles.itemMeta}>{item.meta}</Text>
-              </View>
-            </View>
-          ))}
-        </View>
-        <View style={styles.totals}>
-          <View style={styles.totalRow}><Text style={styles.totalLabel}>Subtotal</Text><Text style={styles.totalValue}>{formatNaira(subtotal)}</Text></View>
-          <View style={styles.totalDivider} />
-          <View style={styles.totalRow}><Text style={styles.totalEarningsLabel}>Order total</Text><Text style={styles.totalEarnings}>{formatNaira(subtotal)}</Text></View>
-        </View>
-      </View>
+                  {order.notes ? (
+                    <View style={styles.notesBox}>
+                      <Text style={styles.notesLabel}>Buyer instructions</Text>
+                      <Text style={styles.notesBody}>{order.notes}</Text>
+                    </View>
+                  ) : null}
+                </Card>
+              </AnimatedEntrance>
 
-      <View style={styles.deliveryCard}>
-        <Text style={styles.deliveryTitle}>Delivery Details</Text>
-        <View style={styles.deliveryList}>
-          <View style={styles.deliveryRow}>
-            <View style={styles.deliveryIconWrap}><Map color={C.slate500} size={16} /></View>
-            <View>
-              <Text style={styles.deliveryLabel}>Delivery Area</Text>
-              <Text style={styles.deliveryValue}>{deliveryArea}</Text>
-            </View>
-          </View>
-          <View style={styles.deliveryRow}>
-            <View style={styles.deliveryIconWrap}><CalendarClock color={C.slate500} size={16} /></View>
-            <View>
-              <Text style={styles.deliveryLabel}>Preferred Window</Text>
-              <Text style={styles.deliveryValue}>{deliveryWindow}</Text>
-              {order.notes ? <Text style={styles.deliverySubValue}>{order.notes}</Text> : null}
-            </View>
-          </View>
-        </View>
-      </View>
+              <AnimatedEntrance delay={70}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>FULFILLMENT TRACKING</Eyebrow>
+                  <Text style={styles.sectionTitle}>Order Timeline</Text>
 
-      <View style={[styles.actionBar, { bottom: Math.max(34, insets.bottom) + 56 }]}>
-        <DesignButton label="Decline" onPress={declineOrder} variant="secondary" style={styles.declineButton} />
-        <DesignButton
-          label={actionLabel}
-          loading={busy}
-          disabled={!nextStatus}
-          onPress={() => void acceptOrder()}
-          icon={nextStatus ? <CheckCircle2 color={C.white} size={18} /> : undefined}
-          style={styles.acceptButton}
-        />
-      </View>
-    </DesignScreen>
+                  <View style={styles.timeline}>
+                    {ORDER_TIMELINE_STEPS.map((step, index) => {
+                      const completed = index < currentStepIdx || (order.status === 'delivered' && index === currentStepIdx)
+                      const active = index === currentStepIdx && order.status !== 'delivered'
+                      const isLast = index === ORDER_TIMELINE_STEPS.length - 1
+
+                      return (
+                        <View key={step.status} style={styles.timelineRow}>
+                          <View style={styles.timelineRail}>
+                            <View
+                              style={[
+                                styles.timelineDot,
+                                completed && styles.timelineDotDone,
+                                active && styles.timelineDotActive,
+                              ]}
+                            >
+                              {completed ? <Check color={colors.white} size={13} /> : null}
+                            </View>
+                            {!isLast ? (
+                              <View style={[styles.timelineLine, completed && styles.timelineLineDone]} />
+                            ) : null}
+                          </View>
+
+                          <View style={styles.timelineCopy}>
+                            <Text
+                              style={[
+                                styles.timelineTitle,
+                                (completed || active) && styles.timelineTitleStrong,
+                              ]}
+                            >
+                              {step.title}
+                            </Text>
+                            {step.subtitle ? (
+                              <Text style={styles.timelineSub}>{step.subtitle}</Text>
+                            ) : null}
+                          </View>
+                        </View>
+                      )
+                    })}
+                  </View>
+                </Card>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={110}>
+                <Card style={styles.sectionCard}>
+                  <Eyebrow>{isFarmer ? 'BUYER CONTACT' : 'FARMER CONTACT'}</Eyebrow>
+                  <Text style={styles.sectionTitle}>{counterpartyName}</Text>
+                  <Text style={styles.helperText}>
+                    {phoneUrl
+                      ? 'Coordinate dispatch time or pickup landmarks directly by phone or WhatsApp.'
+                      : 'Phone contact is shown once the counterparty contact record is available.'}
+                  </Text>
+
+                  {contactError ? <MessageBanner>{contactError}</MessageBanner> : null}
+
+                  <View style={styles.contactButtons}>
+                    <AppButton
+                      disabled={!phoneUrl}
+                      icon={<Phone color={colors.pine} size={18} />}
+                      label="Call"
+                      onPress={() => void openContactUrl(phoneUrl)}
+                      style={styles.flex}
+                      variant="secondary"
+                    />
+                    <AppButton
+                      disabled={!whatsAppUrl}
+                      icon={<MessageCircle color={colors.pine} size={18} />}
+                      label="WhatsApp"
+                      onPress={() => void openContactUrl(whatsAppUrl)}
+                      style={styles.flex}
+                      variant="secondary"
+                    />
+                  </View>
+                </Card>
+              </AnimatedEntrance>
+
+              {isBuyer && order.status === 'delivered' ? (
+                <AnimatedEntrance delay={150}>
+                  <Card style={styles.sectionCard}>
+                    <Eyebrow>QUALITY FEEDBACK</Eyebrow>
+                    <Text style={styles.sectionTitle}>
+                      {order.rating ? `You rated this harvest ${order.rating}/5` : 'Rate your delivery'}
+                    </Text>
+
+                    {order.rating ? (
+                      <>
+                        <View style={styles.starRow}>
+                          {[1, 2, 3, 4, 5].map((value) => (
+                            <View key={value} style={styles.starDisplayBox}>
+                              <Star
+                                color={value <= (order.rating ?? 0) ? colors.gold : colors.line}
+                                fill={value <= (order.rating ?? 0) ? colors.gold : 'transparent'}
+                                size={22}
+                              />
+                            </View>
+                          ))}
+                        </View>
+                        {order.rating_note ? <Text style={styles.helperText}>“{order.rating_note}”</Text> : null}
+                      </>
+                    ) : (
+                      <>
+                        <View style={styles.starRow}>
+                          {[1, 2, 3, 4, 5].map((value) => (
+                            <Pressable
+                              key={value}
+                              accessibilityLabel={`Rate ${value} star${value === 1 ? '' : 's'}`}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: value <= selectedRating }}
+                              onPress={() => {
+                                triggerSelectionHaptic()
+                                setSelectedRating(value)
+                              }}
+                              style={styles.starBtn}
+                            >
+                              <Star
+                                color={value <= selectedRating ? colors.gold : colors.muted}
+                                fill={value <= selectedRating ? colors.gold : 'transparent'}
+                                size={24}
+                              />
+                            </Pressable>
+                          ))}
+                        </View>
+
+                        <TextField
+                          label="Delivery & freshness note (optional)"
+                          multiline
+                          onChangeText={setRatingNote}
+                          placeholder="How was the produce weight, freshness, and handoff?"
+                          value={ratingNote}
+                        />
+
+                        {ratingError ? <MessageBanner>{ratingError}</MessageBanner> : null}
+
+                        <AppButton
+                          label="Submit Review"
+                          loading={ratingBusy}
+                          onPress={() => void handleSubmitRating()}
+                        />
+                      </>
+                    )}
+                  </Card>
+                </AnimatedEntrance>
+              ) : null}
+
+              {error ? <MessageBanner>{error}</MessageBanner> : null}
+            </>
+          )}
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      {nextStatus ? (
+        <View style={[styles.stickyBar, { paddingBottom: Math.max(space.md, insets.bottom) }]}>
+          <AppButton
+            label={actionLabel(nextStatus)}
+            loading={busy}
+            onPress={() => void handleAdvance()}
+          />
+        </View>
+      ) : null}
+    </SafeAreaView>
   )
-}
-
-function shortId(value: string) {
-  return value.length > 8 ? value.slice(0, 4).toUpperCase() : value
-}
-
-function statusIndexFor(status: HarvestOrder['status']) {
-  if (status === 'pending') return 0
-  if (status === 'accepted') return 1
-  if (status === 'ready' || status === 'out_for_delivery') return 2
-  return 3
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value)
-  return new Intl.DateTimeFormat('en-NG', {
-    day: 'numeric',
-    month: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-    timeZone: 'Africa/Lagos',
-  }).format(date)
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 20, paddingBottom: 180, paddingHorizontal: 20, paddingTop: 16 },
-  pressed: { transform: [{ scale: 0.98 }] },
-  messageCard: { alignItems: 'flex-start', backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, gap: 10, padding: 20, ...shadow.sm },
-  messageTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
-  messageBody: body({ color: C.slate500, fontSize: 13, lineHeight: 20 }),
-  messageCta: { alignSelf: 'stretch', marginTop: 4 },
-  backRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-  backText: body({ color: C.slate500, fontSize: 14, fontWeight: '500' }),
-  orderHeading: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
-  orderTitle: heading({ color: C.slate900, fontSize: 24, fontWeight: '700' }),
-  orderDate: body({ color: C.slate500, fontSize: 12, marginTop: 2 }),
-  statusBadge: { alignItems: 'center', borderRadius: R.md, flexDirection: 'row', gap: 4, paddingHorizontal: 10, paddingVertical: 4 },
-  statusPending: { backgroundColor: C.amber50 },
-  statusDelivered: { backgroundColor: C.farm50 },
-  statusText: body({ fontSize: 11, fontWeight: '700', letterSpacing: 0.55 }),
-  statusTextPending: { color: C.amber600 },
-  statusTextDelivered: { color: C.farm700 },
-  buyerCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, padding: 16, ...shadow.sm },
-  buyerRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  buyerIdentity: { alignItems: 'center', flexDirection: 'row', gap: 12 },
-  buyerInitial: { alignItems: 'center', backgroundColor: C.farm50, borderRadius: R.pill, height: 40, justifyContent: 'center', width: 40 },
-  buyerInitialText: heading({ color: C.farm700, fontSize: 16, fontWeight: '700' }),
-  buyerName: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
-  buyerLocationRow: { alignItems: 'center', flexDirection: 'row', gap: 4, marginTop: 2 },
-  buyerLocation: body({ color: C.slate500, fontSize: 11 }),
-  messageButton: { alignItems: 'center', backgroundColor: C.farm50, borderRadius: R.pill, height: 36, justifyContent: 'center', width: 36 },
-  timelineCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, padding: 20, ...shadow.sm },
-  cardTitle: heading({ color: C.slate900, fontSize: 16, fontWeight: '700', marginBottom: 16 }),
-  itemsTitle: heading({ color: C.slate900, fontSize: 16, fontWeight: '700' }),
-  timeline: { marginLeft: 8, position: 'relative' },
-  timelineLine: { backgroundColor: C.slate100, bottom: 8, left: 7, position: 'absolute', top: 8, width: 2 },
-  timelineStep: { flexDirection: 'row', gap: 16, position: 'relative', zIndex: 1 },
-  timelineStepGap: { marginBottom: 20 },
-  timelineStepFuture: { opacity: 0.5 },
-  timelineDotSlot: { height: 16, marginTop: 2, position: 'relative', width: 16 },
-  timelineDotRing: { borderColor: C.amber100, borderRadius: R.pill, borderWidth: 2, height: 20, left: -2, position: 'absolute', top: -2, width: 20 },
-  timelineDot: { borderRadius: R.pill, height: 16, width: 16 },
-  timelineDotActive: { backgroundColor: C.amber500, borderColor: C.white, borderWidth: 3 },
-  timelineDotPast: { backgroundColor: C.farm600, borderColor: C.white, borderWidth: 3 },
-  timelineDotFuture: { backgroundColor: C.slate200, borderColor: C.white, borderWidth: 2 },
-  timelineDotSmall: { height: 16, width: 16 },
-  timelineTitle: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
-  timelineTitleFuture: { color: C.slate700, fontWeight: '600' },
-  timelineSubtitle: body({ color: C.slate500, fontSize: 11 }),
-  itemsCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, overflow: 'hidden', padding: 4, ...shadow.sm },
-  itemsHeader: { borderBottomColor: C.slate100, borderBottomWidth: 1, paddingHorizontal: 16, paddingVertical: 16 },
-  itemsBody: { padding: 8 },
-  itemRow: { flexDirection: 'row', gap: 12, padding: 8 },
-  itemRowBorder: { borderBottomColor: C.slate50, borderBottomWidth: 1 },
-  itemImageWrap: { backgroundColor: C.slate100, borderRadius: R.xl, height: 64, overflow: 'hidden', width: 64 },
-  itemImage: { height: '100%', width: '100%' },
-  itemImagePlaceholder: { alignItems: 'center', height: '100%', justifyContent: 'center', width: '100%' },
-  itemCopy: { flex: 1, paddingVertical: 2 },
-  itemTitleRow: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', paddingRight: 8 },
-  itemTitle: body({ color: C.slate900, flex: 1, fontSize: 14, fontWeight: '700' }),
-  itemAmount: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
-  itemMeta: body({ color: C.slate500, fontSize: 12, marginTop: 2 }),
-  totals: { backgroundColor: C.slate50, borderBottomLeftRadius: R.xl, borderBottomRightRadius: R.xl, borderTopColor: C.slate100, borderTopWidth: 1, gap: 8, padding: 16 },
-  totalRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  totalLabel: body({ color: C.slate500, fontSize: 14 }),
-  totalValue: body({ color: C.slate900, fontSize: 14, fontWeight: '500' }),
-  totalDivider: { backgroundColor: C.slate200, height: 1 },
-  totalEarningsLabel: body({ color: C.slate900, fontSize: 14, fontWeight: '700' }),
-  totalEarnings: heading({ color: C.farm800, fontSize: 20, fontWeight: '700' }),
-  deliveryCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['2xl'], borderWidth: 1, padding: 16, ...shadow.sm },
-  deliveryTitle: heading({ color: C.slate900, fontSize: 16, fontWeight: '700', marginBottom: 12 }),
-  deliveryList: { gap: 16 },
-  deliveryRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 12 },
-  deliveryIconWrap: { alignItems: 'center', backgroundColor: C.slate50, borderRadius: R.pill, height: 32, justifyContent: 'center', width: 32 },
-  deliveryLabel: body({ color: C.slate500, fontSize: 11, fontWeight: '500', letterSpacing: 0.55, marginBottom: 2, textTransform: 'uppercase' }),
-  deliveryValue: body({ color: C.slate900, fontSize: 14, fontWeight: '500' }),
-  deliverySubValue: body({ color: C.slate500, fontSize: 12, marginTop: 2 }),
-  actionBar: { backgroundColor: C.white, borderTopColor: C.slate100, borderTopWidth: 1, flexDirection: 'row', gap: 12, left: 0, paddingHorizontal: 20, paddingVertical: 16, position: 'absolute', right: 0, zIndex: 30, ...shadow.actionBar },
-  declineButton: { elevation: 0, flex: 1, height: 48, shadowColor: 'transparent', shadowOpacity: 0, shadowRadius: 0 },
-  acceptButton: { flex: 2, height: 48 },
+  screen: {
+    backgroundColor: colors.cream,
+    flex: 1,
+  },
+  flex: {
+    flex: 1,
+  },
+  topBar: {
+    alignItems: 'center',
+    backgroundColor: colors.cream,
+    borderBottomColor: colors.line,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: space.md,
+    paddingVertical: space.xs,
+  },
+  topBarBtn: {
+    alignItems: 'center',
+    borderRadius: radii.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  topBarTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 17,
+  },
+  topBarSpacer: {
+    height: 44,
+    width: 44,
+  },
+  scrollContent: {
+    gap: space.md,
+    padding: space.lg,
+  },
+  scrollContentWithBar: {
+    paddingBottom: 112,
+  },
+  skeletonWrap: {
+    gap: space.md,
+  },
+  summaryCard: {
+    gap: space.md,
+  },
+  summaryHead: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: space.md,
+  },
+  thumb: {
+    backgroundColor: colors.creamSubtle,
+    borderRadius: radii.md,
+    height: 84,
+    width: 84,
+  },
+  summaryCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  cropTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 20,
+  },
+  qtySub: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  badgeWrap: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+  },
+  kvGroup: {
+    borderTopColor: colors.line,
+    borderTopWidth: 1,
+    gap: space.xs,
+    paddingTop: space.sm,
+  },
+  notesBox: {
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    gap: 4,
+    padding: space.sm,
+  },
+  notesLabel: {
+    fontFamily: fonts.bodyBold,
+    color: colors.ink,
+    fontSize: 12,
+  },
+  notesBody: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  sectionCard: {
+    gap: space.sm,
+  },
+  sectionTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 19,
+  },
+  helperText: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  timeline: {
+    marginTop: space.xs,
+  },
+  timelineRow: {
+    flexDirection: 'row',
+    gap: space.md,
+    minHeight: 54,
+  },
+  timelineRail: {
+    alignItems: 'center',
+    width: 24,
+  },
+  timelineDot: {
+    alignItems: 'center',
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.pill,
+    borderWidth: 2,
+    height: 24,
+    justifyContent: 'center',
+    width: 24,
+  },
+  timelineDotDone: {
+    backgroundColor: colors.pine,
+    borderColor: colors.pine,
+  },
+  timelineDotActive: {
+    backgroundColor: colors.paleGold,
+    borderColor: colors.gold,
+  },
+  timelineLine: {
+    backgroundColor: colors.line,
+    flex: 1,
+    marginVertical: 4,
+    width: 2,
+  },
+  timelineLineDone: {
+    backgroundColor: colors.pine,
+  },
+  timelineCopy: {
+    flex: 1,
+    gap: 2,
+    paddingBottom: space.sm,
+  },
+  timelineTitle: {
+    fontFamily: fonts.bodyMedium,
+    color: colors.muted,
+    fontSize: 14,
+  },
+  timelineTitleStrong: {
+    fontFamily: fonts.bodyBold,
+    color: colors.ink,
+  },
+  timelineSub: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  contactButtons: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  starRow: {
+    flexDirection: 'row',
+    gap: space.xs,
+  },
+  starDisplayBox: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  starBtn: {
+    alignItems: 'center',
+    backgroundColor: colors.creamSubtle,
+    borderColor: colors.line,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  stickyBar: {
+    backgroundColor: colors.white,
+    borderTopColor: colors.line,
+    borderTopWidth: 1,
+    bottom: 0,
+    left: 0,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    position: 'absolute',
+    right: 0,
+  },
+  pressed: {
+    opacity: 0.8,
+  },
 })
