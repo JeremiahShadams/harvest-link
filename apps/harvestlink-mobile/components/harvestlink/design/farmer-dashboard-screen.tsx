@@ -1,330 +1,516 @@
-import { useEffect, useMemo } from 'react'
-import { router } from 'expo-router'
+import { useCallback, useMemo, useState } from 'react'
 import { Image } from 'expo-image'
+import { router } from 'expo-router'
+import { ArrowRight, Plus, Share2, Sprout, TrendingUp, Wheat } from 'lucide-react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { AppHeader } from '@/components/harvestlink/app-header'
+import { useHarvestLink } from '@/components/harvestlink/context'
 import {
-  Camera,
-  CheckCircle2,
-  Clock4,
-  FileText,
-  Info,
-  Leaf,
-  PlusCircle,
-  Star,
-  TrendingUp,
-} from 'lucide-react-native'
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
-import { useHarvestLink } from '../context'
-import { DesignHeader, DesignScreen } from './ui'
-import { body, C, heading, R, shadow } from './tokens'
-import { useFarmerListings, useOrders, useScans } from '@/lib/harvestlink/use-data'
-import { computeFarmerSignals } from '@/lib/harvestlink/signals'
-import { useActivityReport } from '@/lib/harvestlink/use-report'
-import { formatQuantity } from '@/lib/harvestlink/utils'
+  AnimatedEntrance,
+  AppButton,
+  Card,
+  EmptyState,
+  Eyebrow,
+  MessageBanner,
+  OrderCardSkeleton,
+  ScreenScroll,
+  SectionTitle,
+  SkeletonBox,
+  StatTile,
+  StatusBadge,
+  colors,
+  fonts,
+  radii,
+  space,
+  typeScale,
+} from '@/components/harvestlink/ui'
+import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
+import { listingImage } from '@/lib/harvestlink/images'
+import { STATUS_LABELS, type HarvestOrder } from '@/lib/harvestlink/types'
+import { useActivityReport, useFarmerListings, useOrders } from '@/lib/harvestlink/use-data'
+import { formatDate, formatNaira, formatUnitCount } from '@/lib/harvestlink/utils'
 
-const DESIGN_TOMATOES = 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?q=80&w=150&auto=format&fit=crop'
-
-type FeedOrder = {
-  id: string
-  title: string
-  status: 'pending' | 'delivered'
-  meta: string
-  image: string
-  rating?: number
+function statusTone(status: HarvestOrder['status']): 'green' | 'gold' | 'gray' {
+  if (status === 'delivered') return 'green'
+  if (status === 'pending') return 'gold'
+  return 'gray'
 }
 
-export function FarmerDashboardScreen({ showBottomNav = true }: { showBottomNav?: boolean }) {
-  const { user, profile } = useHarvestLink()
-  const { data: listings } = useFarmerListings(user?.id ?? null)
-  const { data: orders } = useOrders(user?.id ?? null)
-  const { data: scans } = useScans(user?.id ?? null)
+export function FarmerDashboardScreen() {
+  const { user, profile, t } = useHarvestLink()
+  const ordersResult = useOrders(user?.id ?? null)
+  const listingsResult = useFarmerListings(user?.id ?? null)
   const report = useActivityReport()
+  const [refreshing, setRefreshing] = useState(false)
 
-  const signals = useMemo(() => {
-    if (!user) return null
-    return computeFarmerSignals({
-      userId: user.id,
-      listings: listings ?? [],
-      orders: orders ?? [],
-      scans: scans ?? [],
-      days: 30,
-    })
-  }, [listings, orders, scans, user])
-
-  useEffect(() => {
-    if (report.message) Alert.alert('Activity report', report.message)
-  }, [report.message])
-
-  const activeListings = listings?.filter((listing) => listing.status === 'active').length ?? 0
-  const pending = signals?.pendingOrders ?? 0
-  const monthly = signals?.completedThisMonth ?? 0
-  const score = signals?.activityScore ?? 0
-  const deliveryRate = signals?.deliveryRate ?? 0
-  const sales = signals?.salesValue ?? 0
+  const handleRefresh = useCallback(async () => {
+    triggerSelectionHaptic()
+    setRefreshing(true)
+    await Promise.all([ordersResult.mutate(), listingsResult.mutate()])
+    setRefreshing(false)
+  }, [listingsResult, ordersResult])
 
   const farmerOrders = useMemo(
-    () => (orders ?? []).filter((order) => order.farmer_id === user?.id),
-    [orders, user?.id],
+    () => (ordersResult.data ?? []).filter((order) => order.farmer_id === user?.id),
+    [ordersResult.data, user?.id],
   )
-  const feedOrders: FeedOrder[] = farmerOrders.slice(0, 2).map((order) => ({
-    id: order.id,
-    title: `${formatQuantity(order.quantity_kg)} Baskets ${order.listing?.crop ?? 'Produce'}`,
-    status: order.status === 'delivered' ? 'delivered' : 'pending',
-    meta: `Order #${shortOrderId(order.id)} • ${relativeTime(order.created_at)}`,
-    image: order.listing?.image_url?.startsWith('http') ? order.listing.image_url : DESIGN_TOMATOES,
-    rating: order.rating ?? undefined,
-  }))
 
-  const userName = profile?.display_name?.trim().split(/\s+/)[0] || 'there'
-  const location = profile?.default_area || 'Add your area in your profile'
+  const farmerListings = useMemo(() => listingsResult.data ?? [], [listingsResult.data])
+  const activeListings = useMemo(
+    () => farmerListings.filter((item) => item.status === 'active' && Number(item.available_kg) > 0),
+    [farmerListings],
+  )
+  const lowStockCount = useMemo(
+    () => activeListings.filter((item) => Number(item.available_kg) <= 3).length,
+    [activeListings],
+  )
+
+  const pendingOrders = useMemo(
+    () => farmerOrders.filter((order) => order.status === 'pending'),
+    [farmerOrders],
+  )
+  const deliveredOrders = useMemo(
+    () => farmerOrders.filter((order) => order.status === 'delivered'),
+    [farmerOrders],
+  )
+  const deliveredRevenue = useMemo(
+    () =>
+      deliveredOrders.reduce(
+        (sum, order) => sum + Number(order.quantity_kg) * Number(order.unit_price_per_kg),
+        0,
+      ),
+    [deliveredOrders],
+  )
+
+  const recentOrders = useMemo(() => farmerOrders.slice(0, 4), [farmerOrders])
+  const isLoading = Boolean(user && ((ordersResult.isLoading && !ordersResult.data) || (listingsResult.isLoading && !listingsResult.data)))
+  const canSell = profile?.role === 'farmer' || profile?.role === 'both'
 
   return (
-    <DesignScreen
-      activeTab="home"
-      showBottomNav={showBottomNav}
-      header={<DesignHeader userName={userName} location={location} />}
-      contentStyle={[styles.content, !showBottomNav && styles.contentWithoutNav]}
-    >
-      <View style={styles.overviewGrid}>
-        <View style={styles.primaryMetric}>
-          <View style={styles.primaryGlow} />
-          <View style={styles.primaryMetricTop}>
-            <View>
-              <Text style={styles.primaryLabel}>Active Listings</Text>
-              <Text style={styles.primaryValue}>{activeListings}</Text>
-            </View>
-            <View style={styles.primaryIconWrap}><Leaf color={C.white} size={20} /></View>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Create New Listing"
-            onPress={() => router.push('/listing/new' as never)}
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}
-          >
-            <PlusCircle color={C.farm900} size={18} />
-            <Text style={styles.primaryButtonText}>Create New Listing</Text>
-          </Pressable>
-        </View>
+    <ScreenScroll onRefresh={handleRefresh} refreshing={refreshing}>
+      <AppHeader />
 
-        <View style={styles.metricCard}>
-          <View style={styles.metricCardTop}>
-            <Clock4 color={C.amber500} size={20} />
-            <View style={styles.amberBadge}><Text style={styles.amberBadgeText}>Pending</Text></View>
-          </View>
-          <Text style={styles.metricValue}>{pending}</Text>
-          <Text style={styles.metricCaption}>Awaiting acceptance</Text>
-        </View>
-
-        <View style={styles.metricCard}>
-          <View style={styles.metricCardTop}>
-            <CheckCircle2 color={C.farm600} size={20} />
-            <View style={styles.slateBadge}><Text style={styles.slateBadgeText}>Monthly</Text></View>
-          </View>
-          <Text style={styles.metricValue}>{monthly}</Text>
-          <Text style={styles.metricCaption}>Completed orders</Text>
-        </View>
-      </View>
-
-      <View style={styles.signalCard}>
-        <View style={styles.signalHead}>
-          <View>
-            <View style={styles.signalTitleRow}>
-              <Text style={styles.sectionTitle}>Activity Signals</Text>
-              <Info color={C.slate400} size={14} />
-            </View>
-            <Text style={styles.sectionSubtitle}>Your marketplace reputation (30 days)</Text>
-          </View>
-          {signals?.hasHistory ? (
-            <View style={styles.topBadge}>
-              <TrendingUp color={C.farm700} size={12} />
-              <Text style={styles.topBadgeText}>Live activity</Text>
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.signalBody}>
-          <View>
-            <View style={styles.scoreRow}>
-              <Text style={styles.scoreLabel}>Consistency Score</Text>
-              <Text style={styles.scoreValue}>{score}<Text style={styles.scoreOutOf}>/100</Text></Text>
-            </View>
-            <View style={styles.progressTrack}>
-              <View style={[styles.progressFill, { width: `${Math.max(0, Math.min(100, score))}%` }]} />
-            </View>
-          </View>
-          <View style={styles.statsGrid}>
-            <View style={styles.statTile}>
-              <Text style={styles.statLabel}>Delivery Rate</Text>
-              <Text style={styles.statValue}>{deliveryRate}%</Text>
-            </View>
-            <View style={styles.statTile}>
-              <Text style={styles.statLabel}>Sales Volume</Text>
-              <Text style={styles.statValue}>{formatCompactNaira(sales)}</Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View>
-        <View style={styles.sectionHead}>
-          <Text style={styles.sectionTitle}>Recent Orders</Text>
-          <Pressable accessibilityRole="button" accessibilityLabel="View all orders" onPress={() => router.push('/orders' as never)}>
-            <Text style={styles.viewAll}>View all</Text>
-          </Pressable>
-        </View>
-        <View style={styles.orderList}>
-          {feedOrders.length ? feedOrders.map((order) => {
-            const rating = order.rating ?? 0
-            return (
-              <Pressable
-                key={order.id}
-                accessibilityRole="button"
-                accessibilityLabel={order.title}
-                onPress={() => router.push(`/order/${order.id}` as never)}
-                style={({ pressed }) => [pressed && styles.pressed]}
-              >
-                <View style={styles.orderCard}>
-                  <View style={styles.orderImageWrap}>
-                    <Image source={{ uri: order.image }} style={styles.orderImage} contentFit="cover" />
-                  </View>
-                  <View style={styles.orderCopy}>
-                    <View style={styles.orderTitleRow}>
-                      <Text style={styles.orderTitle} numberOfLines={1}>{order.title}</Text>
-                      <View style={[styles.statusBadge, order.status === 'pending' ? styles.statusPending : styles.statusDelivered]}>
-                        <Text style={[styles.statusText, order.status === 'pending' ? styles.statusTextPending : styles.statusTextDelivered]}>
-                          {order.status === 'pending' ? 'Pending' : 'Delivered'}
-                        </Text>
-                      </View>
-                    </View>
-                    <View style={styles.orderMetaRow}>
-                      <Text style={styles.orderMeta} numberOfLines={1}>{order.meta}</Text>
-                      {rating > 0 ? (
-                        <View style={styles.stars}>
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <Star
-                              key={star}
-                              color={star <= rating ? C.amber400 : C.slate300}
-                              fill={star <= rating ? C.amber400 : 'transparent'}
-                              size={10}
-                            />
-                          ))}
-                        </View>
-                      ) : null}
-                    </View>
-                  </View>
+      {!user ? (
+        <AnimatedEntrance delay={40}>
+          <EmptyState
+            title="Sell straight from your farm"
+            message="Sign in with your Nigerian phone number to list harvests, receive direct orders, and build a verifiable sales record."
+            action={<AppButton label="Sign in as Farmer" onPress={() => router.push('/profile')} />}
+          />
+        </AnimatedEntrance>
+      ) : !canSell ? (
+        <AnimatedEntrance delay={40}>
+          <EmptyState
+            title="Farmer tools are off"
+            message="Switch your account role to Farmer or Both in Profile to publish harvests and fulfill orders."
+            action={<AppButton label="Update role in Profile" onPress={() => router.push('/profile')} />}
+          />
+        </AnimatedEntrance>
+      ) : (
+        <>
+          <AnimatedEntrance delay={30}>
+            <Card style={styles.heroCard}>
+              <View style={styles.heroTopRow}>
+                <View style={styles.heroCopy}>
+                  <Eyebrow light>{profile?.farm_name || profile?.default_area || 'Farm Workspace'}</Eyebrow>
+                  <Text style={styles.heroTitle}>
+                    {t('greeting')}, {profile?.display_name ?? t('farmerGreetingFallback')}
+                  </Text>
+                  <Text style={styles.heroSubtitle}>
+                    {pendingOrders.length > 0
+                      ? `${pendingOrders.length} pending buyer ${pendingOrders.length === 1 ? 'request needs' : 'requests need'} confirmation.`
+                      : 'Keep stock and prices current so nearby buyers can order fresh stock today.'}
+                  </Text>
                 </View>
-              </Pressable>
-            )
-          }) : (
-            <Text style={styles.sectionSubtitle}>No orders yet. New orders will appear here.</Text>
+                <View style={styles.heroMark}>
+                  <Sprout color={colors.gold} size={24} />
+                </View>
+              </View>
+
+              <View style={styles.heroActions}>
+                <AppButton
+                  icon={<Plus color={colors.white} size={18} />}
+                  label={t('createListing')}
+                  onPress={() => router.push('/listing/new')}
+                  style={styles.heroPrimaryBtn}
+                />
+                <AppButton
+                  icon={<Wheat color={colors.pine} size={18} />}
+                  label={`${t('myHarvestsTitle')} (${activeListings.length})`}
+                  onPress={() => router.push('/harvests')}
+                  style={styles.heroSecondaryBtn}
+                  variant="secondary"
+                />
+              </View>
+            </Card>
+          </AnimatedEntrance>
+
+          {isLoading ? (
+            <View style={styles.sectionGap}>
+              <View style={styles.statsRow}>
+                <View style={styles.statSkeleton}>
+                  <SkeletonBox height={26} width="50%" />
+                  <SkeletonBox height={14} width="70%" />
+                </View>
+                <View style={styles.statSkeleton}>
+                  <SkeletonBox height={26} width="50%" />
+                  <SkeletonBox height={14} width="70%" />
+                </View>
+              </View>
+              <OrderCardSkeleton />
+              <OrderCardSkeleton />
+            </View>
+          ) : (
+            <>
+              <AnimatedEntrance delay={70}>
+                <View style={styles.statsRow}>
+                  <StatTile
+                    hint={pendingOrders.length > 0 ? 'Tap Recent Orders to respond' : 'All caught up'}
+                    label={t('pendingOrders')}
+                    tone="gold"
+                    value={pendingOrders.length}
+                  />
+                  <StatTile
+                    hint={`${deliveredOrders.length} ${t('deliveredMonthly').toLowerCase()}`}
+                    label="Settled Sales"
+                    tone="green"
+                    value={formatNaira(deliveredRevenue)}
+                  />
+                </View>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={110}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Manage active harvest listings"
+                  onPress={() => router.push('/harvests')}
+                  style={({ pressed }) => [styles.inventoryStrip, pressed && styles.pressed]}
+                >
+                  <View style={styles.inventoryStripCopy}>
+                    <Text style={styles.inventoryStripTitle}>
+                      {activeListings.length} {t('activeListings')}
+                      {lowStockCount > 0 ? ` · ${lowStockCount} low stock` : ''}
+                    </Text>
+                    <Text style={styles.inventoryStripSubtitle}>
+                      Update unit prices, adjust available stock, or pause listings anytime.
+                    </Text>
+                  </View>
+                  <ArrowRight color={colors.pine} size={20} />
+                </Pressable>
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={150}>
+                <SectionTitle
+                  action={
+                    farmerOrders.length > 0 ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={t('viewAll')}
+                        onPress={() => router.push('/orders')}
+                        style={styles.viewAllBtn}
+                      >
+                        <Text style={styles.viewAllText}>{t('viewAll')}</Text>
+                        <ArrowRight color={colors.pine} size={15} />
+                      </Pressable>
+                    ) : undefined
+                  }
+                  eyebrow="FULFILLMENT"
+                  title={t('recentOrders')}
+                />
+
+                {ordersResult.error ? (
+                  <MessageBanner>We couldn’t refresh your farm orders. Pull down to retry.</MessageBanner>
+                ) : recentOrders.length === 0 ? (
+                  <EmptyState
+                    title="No buyer requests yet"
+                    message={t('noOrdersYet')}
+                    action={
+                      activeListings.length === 0 ? (
+                        <AppButton label={t('createListing')} onPress={() => router.push('/listing/new')} />
+                      ) : undefined
+                    }
+                  />
+                ) : (
+                  <View style={styles.orderList}>
+                    {recentOrders.map((order) => {
+                      const cropName = order.listing?.crop ?? 'Farm Harvest'
+                      const buyerLabel = order.contact?.buyer_name || order.delivery_area
+                      const total = Number(order.quantity_kg) * Number(order.unit_price_per_kg)
+
+                      return (
+                        <Pressable
+                          key={order.id}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Open order for ${cropName}`}
+                          onPress={() => router.push({ pathname: '/order/[id]', params: { id: order.id } })}
+                          style={({ pressed }) => [styles.orderCard, pressed && styles.pressed]}
+                        >
+                          <Image
+                            contentFit="cover"
+                            source={listingImage({
+                              category: order.listing?.category ?? 'Other',
+                              crop: cropName,
+                              image_url: order.listing?.image_url ?? '',
+                            })}
+                            style={styles.orderThumb}
+                            transition={180}
+                          />
+                          <View style={styles.orderBody}>
+                            <View style={styles.orderTop}>
+                              <Text numberOfLines={1} style={styles.orderCrop}>
+                                {cropName}
+                              </Text>
+                              <StatusBadge label={STATUS_LABELS[order.status]} tone={statusTone(order.status)} />
+                            </View>
+                            <Text numberOfLines={1} style={styles.orderMeta}>
+                              {formatUnitCount(order.quantity_kg, order.unit)} · {buyerLabel}
+                            </Text>
+                            <View style={styles.orderBottom}>
+                              <Text style={styles.orderAmount}>{formatNaira(total)}</Text>
+                              <Text style={styles.orderWindow}>
+                                {formatDate(order.created_at)} · {order.delivery_window}
+                              </Text>
+                            </View>
+                          </View>
+                        </Pressable>
+                      )
+                    })}
+                  </View>
+                )}
+              </AnimatedEntrance>
+
+              <AnimatedEntrance delay={190}>
+                <Card style={styles.signalsCard}>
+                  <View style={styles.signalsHeader}>
+                    <View style={styles.signalsIconBox}>
+                      <TrendingUp color={colors.pine} size={20} />
+                    </View>
+                    <View style={styles.signalsCopy}>
+                      <Text style={styles.signalsTitle}>{t('signalsTitle')}</Text>
+                      <Text style={styles.signalsSub}>{t('signalsSubtitle')}</Text>
+                    </View>
+                  </View>
+
+                  {report.message ? <MessageBanner tone="info">{report.message}</MessageBanner> : null}
+
+                  <View style={styles.signalsActions}>
+                    <AppButton
+                      icon={<Share2 color={colors.white} size={17} />}
+                      label={report.busy ? 'Preparing…' : report.url ? 'Share Report' : t('generateReport')}
+                      loading={report.busy}
+                      onPress={() => (report.url ? void report.share(report.url) : void report.create())}
+                      style={styles.flexButton}
+                    />
+                    <AppButton
+                      label="Signals"
+                      onPress={() => router.push('/signals')}
+                      variant="secondary"
+                    />
+                  </View>
+                </Card>
+              </AnimatedEntrance>
+            </>
           )}
-        </View>
-      </View>
-
-      <View style={styles.pageActions}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Scan & List Produce"
-          onPress={() => router.push('/listing/new' as never)}
-          style={({ pressed }) => [styles.primaryAction, pressed && styles.pressed]}
-        >
-          <Camera color={C.white} size={18} />
-          <Text style={styles.primaryActionText}>Scan &amp; List Produce</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Generate Activity Report"
-          disabled={report.busy}
-          onPress={() => void report.create()}
-          style={({ pressed }) => [styles.secondaryAction, pressed && styles.pressed]}
-        >
-          <FileText color={C.slate400} size={18} />
-          <Text style={styles.secondaryActionText}>{report.busy ? 'Generating Activity Report…' : 'Generate Activity Report'}</Text>
-        </Pressable>
-      </View>
-    </DesignScreen>
+        </>
+      )}
+    </ScreenScroll>
   )
-}
-
-function shortOrderId(id: string) {
-  return id.length > 6 ? id.slice(0, 4).toUpperCase() : id
-}
-
-function relativeTime(value: string) {
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000))
-  if (minutes < 1) return 'Just now'
-  if (minutes < 60) return `${minutes} mins ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hr${hours === 1 ? '' : 's'} ago`
-  if (hours < 48) return 'Yesterday'
-  return `${Math.floor(hours / 24)} days ago`
-}
-
-function formatCompactNaira(value: number) {
-  const naira = Number(value) || 0
-  if (naira >= 1000) return `₦${Math.round(naira / 1000)}k`
-  return `₦${naira}`
 }
 
 const styles = StyleSheet.create({
-  content: { gap: 24, paddingBottom: 112, paddingHorizontal: 20, paddingTop: 16 },
-  contentWithoutNav: { paddingBottom: 24 },
-  pressed: { transform: [{ scale: 0.98 }] },
-  overviewGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
-  primaryMetric: { backgroundColor: C.farm800, borderRadius: R['2xl'], overflow: 'hidden', padding: 20, position: 'relative', width: '100%', ...shadow.sm },
-  primaryGlow: { backgroundColor: C.white10, borderRadius: R.pill, height: 128, opacity: 0.5, position: 'absolute', right: -24, top: -24, width: 128 },
-  primaryMetricTop: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', position: 'relative', zIndex: 10 },
-  primaryLabel: body({ color: C.farm100, fontSize: 14, fontWeight: '500', marginBottom: 4 }),
-  primaryValue: heading({ color: C.white, fontSize: 36, fontWeight: '700', marginBottom: 16 }),
-  primaryIconWrap: { alignItems: 'center', backgroundColor: C.white20, borderRadius: R.pill, height: 40, justifyContent: 'center', width: 40 },
-  primaryButton: { alignItems: 'center', backgroundColor: C.white, borderRadius: R.xl, flexDirection: 'row', gap: 8, height: 40, justifyContent: 'center', width: '100%' },
-  primaryButtonText: body({ color: C.farm900, fontSize: 14, fontWeight: '600' }),
-  metricCard: { backgroundColor: C.white, borderColor: C.slate100, borderRadius: R['2xl'], borderWidth: 1, flexBasis: '47%', flexGrow: 1, padding: 16, ...shadow.sm },
-  metricCardTop: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  amberBadge: { backgroundColor: C.amber50, borderRadius: R.md, paddingHorizontal: 8, paddingVertical: 2 },
-  amberBadgeText: body({ color: C.amber600, fontSize: 10, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' }),
-  slateBadge: { backgroundColor: C.slate50, borderRadius: R.md, paddingHorizontal: 8, paddingVertical: 2 },
-  slateBadgeText: body({ color: C.slate600, fontSize: 10, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase' }),
-  metricValue: heading({ color: C.slate900, fontSize: 24, fontWeight: '700' }),
-  metricCaption: body({ color: C.slate500, fontSize: 12, marginTop: 4 }),
-  signalCard: { backgroundColor: C.white, borderColor: C.slate200, borderRadius: R['3xl'], borderWidth: 1, padding: 20, ...shadow.card },
-  signalHead: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 },
-  signalTitleRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginBottom: 4 },
-  sectionTitle: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
-  sectionSubtitle: body({ color: C.slate500, fontSize: 12 }),
-  topBadge: { alignItems: 'center', backgroundColor: C.farm50, borderRadius: R.pill, flexDirection: 'row', gap: 4, paddingHorizontal: 10, paddingVertical: 4 },
-  topBadgeText: body({ color: C.farm700, fontSize: 12, fontWeight: '600' }),
-  signalBody: { gap: 16 },
-  scoreRow: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
-  scoreLabel: body({ color: C.slate700, fontSize: 14, fontWeight: '500' }),
-  scoreValue: heading({ color: C.slate900, fontSize: 16, fontWeight: '700' }),
-  scoreOutOf: body({ color: C.slate500, fontSize: 12, fontWeight: '400' }),
-  progressTrack: { backgroundColor: C.slate100, borderRadius: R.pill, height: 8, overflow: 'hidden', width: '100%' },
-  progressFill: { backgroundColor: C.farm600, borderRadius: R.pill, height: '100%' },
-  statsGrid: { flexDirection: 'row', gap: 16, paddingTop: 8 },
-  statTile: { backgroundColor: C.slate50, borderRadius: R.xl, flex: 1, padding: 12 },
-  statLabel: body({ color: C.slate500, fontSize: 11, fontWeight: '500', letterSpacing: 0.3, marginBottom: 4, textTransform: 'uppercase' }),
-  statValue: heading({ color: C.slate900, fontSize: 18, fontWeight: '700' }),
-  sectionHead: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 16 },
-  viewAll: body({ color: C.farm700, fontSize: 14, fontWeight: '500' }),
-  orderList: { gap: 12 },
-  orderCard: { alignItems: 'center', backgroundColor: C.white, borderColor: C.slate100, borderRadius: R['2xl'], borderWidth: 1, flexDirection: 'row', gap: 12, padding: 14, ...shadow.sm },
-  orderImageWrap: { backgroundColor: C.slate100, borderRadius: R.xl, height: 48, overflow: 'hidden', width: 48 },
-  orderImage: { height: '100%', width: '100%' },
-  orderCopy: { flex: 1, minWidth: 0 },
-  orderTitleRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 8, justifyContent: 'space-between', marginBottom: 2 },
-  orderTitle: heading({ color: C.slate900, flex: 1, fontSize: 14, fontWeight: '700' }),
-  statusBadge: { borderRadius: R.sm, paddingHorizontal: 6, paddingVertical: 2 },
-  statusPending: { backgroundColor: C.amber50 },
-  statusDelivered: { backgroundColor: C.farm50 },
-  statusText: body({ fontSize: 12, fontWeight: '600' }),
-  statusTextPending: { color: C.amber600 },
-  statusTextDelivered: { color: C.farm700 },
-  orderMetaRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
-  orderMeta: body({ color: C.slate500, flex: 1, fontSize: 12 }),
-  stars: { flexDirection: 'row', gap: 0 },
-  pageActions: { gap: 12, paddingBottom: 24, paddingTop: 16 },
-  primaryAction: { alignItems: 'center', backgroundColor: C.farm800, borderRadius: R.xl, flexDirection: 'row', gap: 8, height: 48, justifyContent: 'center', ...shadow.action },
-  primaryActionText: body({ color: C.white, fontSize: 14, fontWeight: '700' }),
-  secondaryAction: { alignItems: 'center', backgroundColor: C.white, borderColor: C.slate200, borderRadius: R.xl, borderWidth: 1, flexDirection: 'row', gap: 8, height: 48, justifyContent: 'center', ...shadow.sm },
-  secondaryActionText: body({ color: C.slate700, fontSize: 14, fontWeight: '700' }),
+  heroCard: {
+    backgroundColor: colors.pine,
+    borderColor: colors.pineDeep,
+    gap: space.md,
+    marginBottom: space.lg,
+  },
+  heroTopRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: space.md,
+    justifyContent: 'space-between',
+  },
+  heroCopy: {
+    flex: 1,
+    gap: space.xs,
+  },
+  heroTitle: {
+    ...typeScale.display,
+    color: colors.white,
+  },
+  heroSubtitle: {
+    ...typeScale.body,
+    color: '#DDE7DF',
+  },
+  heroMark: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: radii.lg,
+    height: 48,
+    justifyContent: 'center',
+    width: 48,
+  },
+  heroActions: {
+    gap: space.sm,
+  },
+  heroPrimaryBtn: {
+    backgroundColor: colors.leaf,
+  },
+  heroSecondaryBtn: {
+    backgroundColor: colors.cream,
+    borderColor: colors.cream,
+  },
+  sectionGap: {
+    gap: space.md,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    gap: space.sm,
+    marginBottom: space.md,
+  },
+  statSkeleton: {
+    backgroundColor: colors.white,
+    borderColor: colors.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flex: 1,
+    gap: space.sm,
+    padding: space.md,
+  },
+  inventoryStrip: {
+    alignItems: 'center',
+    backgroundColor: colors.paleGreen,
+    borderColor: '#CEDBC8',
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: space.md,
+    justifyContent: 'space-between',
+    marginBottom: space.lg,
+    minHeight: 68,
+    padding: space.md,
+  },
+  inventoryStripCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  inventoryStripTitle: {
+    fontFamily: fonts.heading,
+    color: colors.pineDeep,
+    fontSize: 16,
+  },
+  inventoryStripSubtitle: {
+    ...typeScale.small,
+    color: colors.pine,
+  },
+  viewAllBtn: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 4,
+    minHeight: 44,
+    paddingHorizontal: space.xs,
+  },
+  viewAllText: {
+    fontFamily: fonts.bodyBold,
+    color: colors.pine,
+    fontSize: 13,
+  },
+  orderList: {
+    gap: space.sm,
+    marginBottom: space.lg,
+  },
+  orderCard: {
+    alignItems: 'center',
+    backgroundColor: colors.white,
+    borderColor: colors.line,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: space.md,
+    minHeight: 92,
+    padding: space.sm,
+  },
+  orderThumb: {
+    backgroundColor: colors.creamSubtle,
+    borderRadius: radii.md,
+    height: 76,
+    width: 76,
+  },
+  orderBody: {
+    flex: 1,
+    gap: 4,
+  },
+  orderTop: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: space.xs,
+    justifyContent: 'space-between',
+  },
+  orderCrop: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    flex: 1,
+    fontSize: 16,
+  },
+  orderMeta: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  orderBottom: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: space.sm,
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  orderAmount: {
+    fontFamily: fonts.bodyBold,
+    color: colors.pine,
+    fontSize: 15,
+  },
+  orderWindow: {
+    ...typeScale.micro,
+    color: colors.muted,
+    flexShrink: 1,
+  },
+  signalsCard: {
+    backgroundColor: colors.creamSubtle,
+    gap: space.md,
+  },
+  signalsHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: space.md,
+  },
+  signalsIconBox: {
+    alignItems: 'center',
+    backgroundColor: colors.paleGreen,
+    borderRadius: radii.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  signalsCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  signalsTitle: {
+    fontFamily: fonts.heading,
+    color: colors.ink,
+    fontSize: 18,
+  },
+  signalsSub: {
+    ...typeScale.small,
+    color: colors.muted,
+  },
+  signalsActions: {
+    flexDirection: 'row',
+    gap: space.sm,
+  },
+  flexButton: {
+    flex: 1,
+  },
+  pressed: {
+    opacity: 0.85,
+  },
 })
