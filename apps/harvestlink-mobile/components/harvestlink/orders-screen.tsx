@@ -1,64 +1,166 @@
 import { useMemo, useState } from 'react'
 import { router } from 'expo-router'
-import { ArrowRight, Check, Clock3, MapPin, PackageCheck, Star } from 'lucide-react-native'
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ArrowRight, Check, Clock3, MapPin, MessageCircle, PackageCheck, Phone, Star } from 'lucide-react-native'
+import { Alert, Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useSWRConfig } from 'swr'
 import { AppHeader } from './app-header'
-import { AppButton, Card, colors, EmptyState, Eyebrow, MessageBanner, StatusBadge } from './ui'
+import {
+  AppButton,
+  Card,
+  colors,
+  EmptyState,
+  Eyebrow,
+  fonts,
+  MessageBanner,
+  OrderCardSkeleton,
+  StatusBadge,
+} from './ui'
 import { useHarvestLink } from './context'
 import { useOrders } from '@/lib/harvestlink/use-data'
 import { useAdvanceOrder, useRateOrder } from '@/lib/harvestlink/use-mutations'
-import { formatDate, formatNaira, formatQuantity, nextOrderStatus } from '@/lib/harvestlink/utils'
-import { ORDER_STATUSES, STATUS_LABELS } from '@/lib/harvestlink/types'
+import {
+  buildPhoneLink,
+  buildWhatsAppLink,
+  formatDate,
+  formatNaira,
+  formatUnitCount,
+  nextOrderStatus,
+} from '@/lib/harvestlink/utils'
+import { ORDER_STATUSES, ORDER_TIMELINE_STEPS, STATUS_LABELS } from '@/lib/harvestlink/types'
 import type { HarvestOrder } from '@/lib/harvestlink/types'
+import { triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
 
 export function OrdersScreen({ embedded = false }: { embedded?: boolean }) {
-  const { user, profile } = useHarvestLink()
-  const { data: orders, error, isLoading } = useOrders(user?.id ?? null)
+  const { user, profile, activeSpace, t } = useHarvestLink()
+  const { data: orders, error, isLoading, isValidating, mutate: mutateOrders } = useOrders(user?.id ?? null)
   const { advanceOrder } = useAdvanceOrder()
   const [manualView, setManualView] = useState<'buyer' | 'farmer' | null>(null)
-  const view = manualView ?? (profile?.role === 'farmer' ? 'farmer' : 'buyer')
+  const [refreshing, setRefreshing] = useState(false)
+  const view = manualView ?? (profile?.role === 'both' ? activeSpace : profile?.role === 'farmer' ? 'farmer' : 'buyer')
   const { mutate } = useSWRConfig()
 
-  const visibleOrders = useMemo(() => (orders ?? []).filter((order) => view === 'buyer' ? order.buyer_id === user?.id : order.farmer_id === user?.id), [orders, user?.id, view])
+  const visibleOrders = useMemo(
+    () => (orders ?? []).filter((order) => (view === 'buyer' ? order.buyer_id === user?.id : order.farmer_id === user?.id)),
+    [orders, user?.id, view],
+  )
+
   const updateStatus = async (order: HarvestOrder) => {
     const next = nextOrderStatus(order.status)
     if (!user || !next) return
     const result = await advanceOrder(order.id, next)
     if (!result.success) {
       Alert.alert('Order not updated', result.error ?? 'We couldn’t save that status change. Refresh your orders and try again.')
-      return
+    }
+  }
+
+  const handleRefresh = async () => {
+    if (!user) return
+    setRefreshing(true)
+    try {
+      await mutateOrders()
+    } finally {
+      setRefreshing(false)
     }
   }
 
   const body = (
     <>
-        {embedded ? null : <AppHeader />}
-        <View style={styles.heading}>
-          <Eyebrow>THE JOURNEY FROM FARM TO TABLE</Eyebrow>
-          <Text style={styles.title}>Orders, in one place.</Text>
-          <Text style={styles.subtitle}>Follow each handoff from a farmer’s confirmation to your door.</Text>
+      {embedded ? null : <AppHeader />}
+      <View style={styles.heading}>
+        <Eyebrow>{t('ordersEyebrow')}</Eyebrow>
+        <Text style={styles.title}>{t('ordersTitle')}</Text>
+        <Text style={styles.subtitle}>{t('ordersSubtitle')}</Text>
+      </View>
+
+      {profile?.role === 'both' ? (
+        <View accessibilityRole="tablist" style={styles.segment}>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === 'buyer' }}
+            onPress={() => {
+              triggerSelectionHaptic()
+              setManualView('buyer')
+            }}
+            style={[styles.segmentOption, view === 'buyer' && styles.segmentSelected]}
+          >
+            <Text style={[styles.segmentText, view === 'buyer' && styles.segmentTextSelected]}>My orders</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="tab"
+            accessibilityState={{ selected: view === 'farmer' }}
+            onPress={() => {
+              triggerSelectionHaptic()
+              setManualView('farmer')
+            }}
+            style={[styles.segmentOption, view === 'farmer' && styles.segmentSelected]}
+          >
+            <Text style={[styles.segmentText, view === 'farmer' && styles.segmentTextSelected]}>Farm orders</Text>
+          </Pressable>
         </View>
-        {profile?.role === 'both' ? (
-          <View accessibilityRole="tablist" style={styles.segment}>
-            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'buyer' }} onPress={() => setManualView('buyer')} style={[styles.segmentOption, view === 'buyer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'buyer' && styles.segmentTextSelected]}>My orders</Text></Pressable>
-            <Pressable accessibilityRole="tab" accessibilityState={{ selected: view === 'farmer' }} onPress={() => setManualView('farmer')} style={[styles.segmentOption, view === 'farmer' && styles.segmentSelected]}><Text style={[styles.segmentText, view === 'farmer' && styles.segmentTextSelected]}>Farm orders</Text></Pressable>
-          </View>
-        ) : null}
-        {error ? <MessageBanner>We couldn’t load your orders. Check your connection and try again.</MessageBanner> : null}
-        {!user ? (
-          <EmptyState title="Your orders are personal." message="Sign in with your phone to keep every order and delivery update together." action={<AppButton label="Continue with phone" onPress={() => router.push('/profile' as never)} />} />
-        ) : isLoading && !orders ? (
-          <Card style={styles.loading}><ActivityIndicator color={colors.pine} /><Text style={styles.subtitle}>Loading your orders…</Text></Card>
-        ) : visibleOrders.length ? (
-          <View style={styles.list}>
-            {visibleOrders.map((order) => <OrderCard key={order.id} order={order} mode={view} onAdvance={() => void updateStatus(order)} onRefresh={() => mutate(['harvestlink-orders', user.id])} />)}
-          </View>
-        ) : (
-          <EmptyState title={view === 'buyer' ? 'Your next good meal starts here.' : 'Your farm orders will show here.'} message={view === 'buyer' ? 'When you request a nearby harvest, we’ll keep its progress here.' : 'When a buyer requests your harvest, you can confirm and update its delivery here.'} action={<AppButton label={view === 'buyer' ? 'Browse fresh harvests' : 'Open farmer tools'} variant="secondary" icon={<ArrowRight color={colors.pine} size={15} />} onPress={() => router.push(view === 'buyer' ? '/' as never : '/farmer' as never)} />} />
-        )}
-        <Card style={styles.helpCard}><Clock3 color={colors.leaf} size={18} /><View style={styles.helpCopy}><Text style={styles.helpTitle}>What each update means</Text><Text style={styles.helpText}>Pending → Accepted → Ready → On the way → Delivered. Your farmer updates the order as it moves.</Text></View></Card>
+      ) : null}
+
+      {error ? (
+        <View style={styles.bannerWrap}>
+          <MessageBanner>We couldn’t load your orders. Pull down to refresh and try again.</MessageBanner>
+        </View>
+      ) : null}
+
+      {!user ? (
+        <View style={styles.emptyWrap}>
+          <EmptyState
+            title="Your orders are personal."
+            message="Sign in with your phone to keep every order and delivery update together."
+            action={<AppButton label="Continue with phone" onPress={() => router.push('/profile' as never)} />}
+          />
+        </View>
+      ) : isLoading && !orders ? (
+        <View style={styles.list}>
+          <OrderCardSkeleton />
+          <OrderCardSkeleton />
+        </View>
+      ) : visibleOrders.length ? (
+        <View style={styles.list}>
+          {visibleOrders.map((order) => (
+            <OrderCard
+              key={order.id}
+              order={order}
+              mode={view}
+              onAdvance={() => void updateStatus(order)}
+              onRefresh={() => void mutate(['harvestlink-orders', user.id])}
+            />
+          ))}
+        </View>
+      ) : (
+        <View style={styles.emptyWrap}>
+          <EmptyState
+            title={view === 'buyer' ? 'Your next good meal starts here.' : 'Your farm orders will show here.'}
+            message={
+              view === 'buyer'
+                ? 'When you request a nearby harvest, we’ll keep its progress here.'
+                : 'When a buyer requests your harvest, you can confirm and update its delivery here.'
+            }
+            action={
+              <AppButton
+                label={view === 'buyer' ? 'Browse fresh harvests' : 'Open farmer dashboard'}
+                variant="secondary"
+                icon={<ArrowRight color={colors.pine} size={16} />}
+                onPress={() => router.push((view === 'buyer' ? '/' : '/farmer') as never)}
+              />
+            }
+          />
+        </View>
+      )}
+
+      <Card style={styles.helpCard}>
+        <Clock3 color={colors.leaf} size={18} />
+        <View style={styles.helpCopy}>
+          <Text style={styles.helpTitle}>5-step delivery tracking</Text>
+          <Text style={styles.helpText}>
+            Requested → Accepted → Ready → On the way → Delivered. Both farmer and buyer stay aligned at each stage.
+          </Text>
+        </View>
+      </Card>
     </>
   )
 
@@ -66,19 +168,50 @@ export function OrdersScreen({ embedded = false }: { embedded?: boolean }) {
 
   return (
     <SafeAreaView edges={['top']} style={styles.safe}>
-      <ScrollView contentContainerStyle={styles.content}>{body}</ScrollView>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing || (isValidating && Boolean(orders?.length))}
+            onRefresh={() => void handleRefresh()}
+            tintColor={colors.pine}
+            colors={[colors.pine]}
+          />
+        }
+      >
+        {body}
+      </ScrollView>
     </SafeAreaView>
   )
 }
 
-function OrderCard({ order, mode, onAdvance, onRefresh }: { order: HarvestOrder; mode: 'buyer' | 'farmer'; onAdvance: () => void; onRefresh: () => void }) {
+function OrderCard({
+  order,
+  mode,
+  onAdvance,
+  onRefresh,
+}: {
+  order: HarvestOrder
+  mode: 'buyer' | 'farmer'
+  onAdvance: () => void
+  onRefresh: () => void
+}) {
   const { user } = useHarvestLink()
   const { rateOrder, busy } = useRateOrder()
   const [rating, setRating] = useState(order.rating ?? 0)
   const [note, setNote] = useState('')
   const index = ORDER_STATUSES.indexOf(order.status)
+  const unit = order.unit || order.listing?.unit || 'kg'
   const total = Number(order.quantity_kg) * Number(order.unit_price_per_kg)
   const isFarmerOrder = mode === 'farmer' && order.farmer_id === user?.id
+
+  const counterpartyPhone = isFarmerOrder ? order.contact?.buyer_phone : order.contact?.farmer_phone
+  const phoneUrl = buildPhoneLink(counterpartyPhone)
+  const waUrl = buildWhatsAppLink(
+    counterpartyPhone,
+    `Hi, following up on HarvestLink order for ${order.listing?.crop ?? 'produce'} (${formatUnitCount(order.quantity_kg, unit)}).`,
+  )
 
   const saveRating = async () => {
     if (!user || rating < 1) return
@@ -93,79 +226,237 @@ function OrderCard({ order, mode, onAdvance, onRefresh }: { order: HarvestOrder;
 
   return (
     <Card style={styles.orderCard}>
-      <View style={styles.cardTop}>
-        <View style={styles.orderIdentity}><Text style={styles.crop}>{order.listing?.crop ?? 'Fresh harvest'}</Text><Text style={styles.farm}>{order.listing?.farm_name ?? (isFarmerOrder ? 'Your farm' : 'Local farm')}</Text></View>
-        <StatusBadge label={STATUS_LABELS[order.status]} tone={order.status === 'delivered' ? 'green' : order.status === 'pending' ? 'gold' : 'gray'} />
-      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`View details for ${order.listing?.crop ?? 'order'}`}
+        onPress={() => router.push(`/order/${order.id}` as never)}
+        style={styles.cardTop}
+      >
+        <View style={styles.orderIdentity}>
+          <Text style={styles.crop} numberOfLines={1}>{order.listing?.crop ?? 'Fresh harvest'}</Text>
+          <Text style={styles.farm} numberOfLines={1}>
+            {order.listing?.farm_name ?? (isFarmerOrder ? order.contact?.buyer_name || 'Buyer' : 'Local farm')}
+          </Text>
+        </View>
+        <StatusBadge
+          label={STATUS_LABELS[order.status]}
+          tone={order.status === 'delivered' ? 'green' : order.status === 'pending' ? 'gold' : 'gray'}
+        />
+      </Pressable>
+
       <View style={styles.orderMeta}>
-        <View style={styles.metaItem}><PackageCheck color={colors.leaf} size={14} /><Text style={styles.metaText}>{formatQuantity(order.quantity_kg)} kg · {formatNaira(total)}</Text></View>
-        <View style={styles.metaItem}><MapPin color={colors.leaf} size={14} /><Text style={styles.metaText}>{order.delivery_area}</Text></View>
+        <View style={styles.metaItem}>
+          <PackageCheck color={colors.leaf} size={15} />
+          <Text style={styles.metaText}>{formatUnitCount(order.quantity_kg, unit)} · {formatNaira(total)}</Text>
+        </View>
+        <View style={styles.metaItem}>
+          <MapPin color={colors.leaf} size={15} />
+          <Text style={styles.metaText}>{order.delivery_area}</Text>
+        </View>
         <Text style={styles.date}>Placed {formatDate(order.created_at)} · {order.delivery_window}</Text>
       </View>
-      <View style={styles.progressRow}>
-        {ORDER_STATUSES.map((status, stepIndex) => <View key={status} style={styles.progressStep}>
-          <View style={[styles.progressDot, stepIndex <= index && styles.progressDone]}>{stepIndex < index ? <Check color={colors.white} size={9} /> : null}</View>
-          {stepIndex < ORDER_STATUSES.length - 1 ? <View style={[styles.progressLine, stepIndex < index && styles.progressLineDone]} /> : null}
-        </View>)}
+
+      {/* Reconciled 5-step progress track matching ORDER_STATUSES 1:1 */}
+      <View style={styles.progressWrap}>
+        <View style={styles.progressRow}>
+          {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
+            <View key={step.status} style={styles.progressStep}>
+              <View style={[styles.progressDot, stepIndex <= index && styles.progressDone]}>
+                {stepIndex < index ? <Check color={colors.white} size={10} /> : null}
+              </View>
+              {stepIndex < ORDER_TIMELINE_STEPS.length - 1 ? (
+                <View style={[styles.progressLine, stepIndex < index && styles.progressLineDone]} />
+              ) : null}
+            </View>
+          ))}
+        </View>
+        <View style={styles.progressLabels}>
+          {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
+            <Text
+              key={step.status}
+              style={[styles.progressLabel, stepIndex <= index && styles.progressLabelActive]}
+              numberOfLines={1}
+            >
+              {step.shortLabel}
+            </Text>
+          ))}
+        </View>
       </View>
-      <View style={styles.progressLabels}><Text style={styles.progressLabel}>Requested</Text><Text style={styles.progressLabel}>Confirmed</Text><Text style={styles.progressLabel}>On the way</Text><Text style={styles.progressLabel}>Delivered</Text></View>
-      {isFarmerOrder && order.status !== 'delivered' ? <AppButton label={order.status === 'pending' ? 'Accept order' : order.status === 'accepted' ? 'Mark ready' : order.status === 'ready' ? 'Start delivery' : 'Mark delivered'} onPress={onAdvance} icon={<ArrowRight color={colors.white} size={15} />} style={styles.actionButton} /> : null}
-      {!isFarmerOrder && order.status === 'delivered' && !order.rating ? <RatingForm rating={rating} setRating={setRating} note={note} setNote={setNote} onSave={() => void saveRating()} busy={busy} /> : null}
-      {!isFarmerOrder && order.status === 'delivered' && order.rating ? <View style={styles.rated}><Star color={colors.gold} fill={colors.gold} size={15} /><Text style={styles.ratedText}>You rated this harvest {order.rating} out of 5.</Text></View> : null}
+
+      <View style={styles.cardActionsRow}>
+        {isFarmerOrder && order.status !== 'delivered' ? (
+          <AppButton
+            label={
+              order.status === 'pending'
+                ? 'Accept order'
+                : order.status === 'accepted'
+                  ? 'Mark ready'
+                  : order.status === 'ready'
+                    ? 'Start delivery'
+                    : 'Mark delivered'
+            }
+            onPress={onAdvance}
+            icon={<ArrowRight color={colors.white} size={16} />}
+            style={styles.actionFlex}
+          />
+        ) : (
+          <AppButton
+            label="Order details"
+            variant="quiet"
+            onPress={() => router.push(`/order/${order.id}` as never)}
+            style={styles.actionFlex}
+          />
+        )}
+
+        {phoneUrl ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Call counterparty"
+            onPress={() => void Linking.openURL(phoneUrl)}
+            style={styles.contactButton}
+          >
+            <Phone color={colors.pine} size={18} />
+          </Pressable>
+        ) : null}
+        {waUrl ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="WhatsApp counterparty"
+            onPress={() => void Linking.openURL(waUrl)}
+            style={styles.contactButton}
+          >
+            <MessageCircle color={colors.pine} size={18} />
+          </Pressable>
+        ) : null}
+      </View>
+
+      {!isFarmerOrder && order.status === 'delivered' && !order.rating ? (
+        <RatingForm rating={rating} setRating={setRating} note={note} setNote={setNote} onSave={() => void saveRating()} busy={busy} />
+      ) : null}
+
+      {!isFarmerOrder && order.status === 'delivered' && order.rating ? (
+        <View style={styles.rated}>
+          <Star color={colors.gold} fill={colors.gold} size={16} />
+          <Text style={styles.ratedText}>
+            You rated this harvest {order.rating} out of 5{order.rating_note ? ` — "${order.rating_note}"` : '.'}
+          </Text>
+        </View>
+      ) : null}
     </Card>
   )
 }
 
-function RatingForm({ rating, setRating, note, setNote, onSave, busy }: { rating: number; setRating: (value: number) => void; note: string; setNote: (value: string) => void; onSave: () => void; busy: boolean }) {
+function RatingForm({
+  rating,
+  setRating,
+  note,
+  setNote,
+  onSave,
+  busy,
+}: {
+  rating: number
+  setRating: (value: number) => void
+  note: string
+  setNote: (value: string) => void
+  onSave: () => void
+  busy: boolean
+}) {
   return (
     <View style={styles.ratingWrap}>
       <Text style={styles.ratingTitle}>How was this harvest?</Text>
-      <View style={styles.stars}>{[1, 2, 3, 4, 5].map((value) => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${value} star${value === 1 ? '' : 's'}`} accessibilityState={{ selected: rating === value }} onPress={() => setRating(value)} style={styles.starButton}><Star color={value <= rating ? colors.gold : '#B7BDB4'} fill={value <= rating ? colors.gold : 'transparent'} size={22} /></Pressable>)}</View>
-      {rating > 0 ? <AppButton label={busy ? 'Saving…' : 'Share feedback'} onPress={onSave} loading={busy} variant="secondary" style={styles.ratingButton} /> : null}
+      <View style={styles.stars}>
+        {[1, 2, 3, 4, 5].map((value) => (
+          <Pressable
+            key={value}
+            accessibilityRole="button"
+            accessibilityLabel={`${value} star${value === 1 ? '' : 's'}`}
+            accessibilityState={{ selected: rating === value }}
+            onPress={() => {
+              triggerSelectionHaptic()
+              setRating(value)
+            }}
+            style={styles.starButton}
+          >
+            <Star
+              color={value <= rating ? colors.gold : '#9BA299'}
+              fill={value <= rating ? colors.gold : 'transparent'}
+              size={24}
+            />
+          </Pressable>
+        ))}
+      </View>
+      {rating > 0 ? (
+        <>
+          <TextInput
+            accessibilityLabel="Delivery and freshness feedback note"
+            maxLength={240}
+            multiline
+            numberOfLines={2}
+            onChangeText={setNote}
+            placeholder="Share a quick note on freshness or delivery (optional)"
+            placeholderTextColor="#7A847D"
+            style={styles.ratingNoteInput}
+            value={note}
+          />
+          <AppButton
+            label={busy ? 'Saving…' : 'Share feedback'}
+            onPress={onSave}
+            loading={busy}
+            variant="secondary"
+            style={styles.ratingButton}
+          />
+        </>
+      ) : null}
     </View>
   )
 }
 
 const styles = StyleSheet.create({
   safe: { backgroundColor: colors.cream, flex: 1 },
-  content: { alignSelf: 'center', gap: 16, maxWidth: 520, paddingBottom: 30, width: '100%' },
-  heading: { gap: 7, paddingHorizontal: 20, paddingTop: 3 },
-  title: { color: colors.ink, fontSize: 28, fontWeight: '700', letterSpacing: -0.9 },
-  subtitle: { color: colors.muted, fontSize: 13, lineHeight: 19 },
-  segment: { backgroundColor: '#EBE9E1', borderRadius: 13, flexDirection: 'row', marginHorizontal: 20, padding: 3 },
-  segmentOption: { alignItems: 'center', borderRadius: 10, flex: 1, justifyContent: 'center', minHeight: 36 },
+  content: { alignSelf: 'center', gap: 16, maxWidth: 520, paddingBottom: 32, width: '100%' },
+  heading: { gap: 7, paddingHorizontal: 20, paddingTop: 4 },
+  title: { fontFamily: fonts.heading, color: colors.ink, fontSize: 28, letterSpacing: -0.7 },
+  subtitle: { fontFamily: fonts.body, color: colors.muted, fontSize: 14, lineHeight: 20 },
+  segment: { backgroundColor: '#EAE6DA', borderRadius: 14, flexDirection: 'row', marginHorizontal: 18, padding: 4 },
+  segmentOption: { alignItems: 'center', borderRadius: 10, flex: 1, justifyContent: 'center', minHeight: 44 },
   segmentSelected: { backgroundColor: colors.white },
-  segmentText: { color: colors.muted, fontSize: 11, fontWeight: '600' },
-  segmentTextSelected: { color: colors.pine, fontWeight: '700' },
-  list: { gap: 11, paddingHorizontal: 18 },
-  loading: { alignItems: 'center', gap: 12, marginHorizontal: 18, paddingVertical: 26 },
-  orderCard: { gap: 12, padding: 14 },
-  cardTop: { alignItems: 'flex-start', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
-  orderIdentity: { flex: 1, gap: 2 },
-  crop: { color: colors.ink, fontSize: 16, fontWeight: '700' },
-  farm: { color: colors.muted, fontSize: 11 },
+  segmentText: { fontFamily: fonts.bodyMedium, color: colors.muted, fontSize: 13 },
+  segmentTextSelected: { fontFamily: fonts.bodyBold, color: colors.pine },
+  bannerWrap: { paddingHorizontal: 18 },
+  emptyWrap: { paddingHorizontal: 18 },
+  list: { gap: 12, paddingHorizontal: 18 },
+  orderCard: { gap: 12, padding: 15 },
+  cardTop: { alignItems: 'flex-start', flexDirection: 'row', gap: 8, justifyContent: 'space-between', minHeight: 44 },
+  orderIdentity: { flex: 1, gap: 2, minWidth: 0 },
+  crop: { fontFamily: fonts.heading, color: colors.ink, fontSize: 17 },
+  farm: { fontFamily: fonts.body, color: colors.muted, fontSize: 13 },
   orderMeta: { gap: 6 },
-  metaItem: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-  metaText: { color: colors.ink, fontSize: 11, fontWeight: '600' },
-  date: { color: colors.muted, fontSize: 10 },
-  progressRow: { alignItems: 'center', flexDirection: 'row', marginTop: 3, paddingHorizontal: 7 },
+  metaItem: { alignItems: 'center', flexDirection: 'row', gap: 7 },
+  metaText: { fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 13 },
+  date: { fontFamily: fonts.body, color: colors.muted, fontSize: 12 },
+  progressWrap: { gap: 6, marginTop: 2 },
+  progressRow: { alignItems: 'center', flexDirection: 'row', paddingHorizontal: 12 },
   progressStep: { alignItems: 'center', flex: 1, flexDirection: 'row' },
-  progressDot: { alignItems: 'center', backgroundColor: '#E1E4DC', borderRadius: 99, height: 16, justifyContent: 'center', width: 16, zIndex: 1 },
+  progressDot: { alignItems: 'center', backgroundColor: '#DFDCD0', borderRadius: 99, height: 18, justifyContent: 'center', width: 18, zIndex: 1 },
   progressDone: { backgroundColor: colors.leaf },
-  progressLine: { backgroundColor: '#E1E4DC', flex: 1, height: 2, marginLeft: -1 },
+  progressLine: { backgroundColor: '#DFDCD0', flex: 1, height: 2, marginLeft: -1 },
   progressLineDone: { backgroundColor: colors.leaf },
-  progressLabels: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -7 },
-  progressLabel: { color: colors.muted, fontSize: 8, textAlign: 'center', width: '25%' },
-  actionButton: { alignSelf: 'stretch', minHeight: 42 },
+  progressLabels: { flexDirection: 'row', justifyContent: 'space-between' },
+  progressLabel: { fontFamily: fonts.body, color: colors.muted, fontSize: 12, textAlign: 'center', width: '20%' },
+  progressLabelActive: { fontFamily: fonts.bodyBold, color: colors.pine },
+  cardActionsRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  actionFlex: { alignSelf: 'stretch', flex: 1 },
+  contactButton: { alignItems: 'center', backgroundColor: colors.paleGreen, borderColor: '#D6E1D1', borderRadius: 14, borderWidth: 1, height: 48, justifyContent: 'center', width: 48 },
   ratingWrap: { borderTopColor: colors.line, borderTopWidth: 1, gap: 10, paddingTop: 12 },
-  ratingTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' },
-  stars: { flexDirection: 'row', gap: 6 },
-  starButton: { padding: 3 },
-  ratingButton: { alignSelf: 'flex-start', minHeight: 38 },
-  rated: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-  ratedText: { color: colors.muted, fontSize: 11 },
+  ratingTitle: { fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 13 },
+  stars: { flexDirection: 'row', gap: 4 },
+  starButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
+  ratingNoteInput: { fontFamily: fonts.body, backgroundColor: colors.creamSubtle, borderColor: colors.line, borderRadius: 12, borderWidth: 1, color: colors.ink, fontSize: 14, minHeight: 68, paddingHorizontal: 12, paddingVertical: 10, textAlignVertical: 'top' },
+  ratingButton: { alignSelf: 'flex-start' },
+  rated: { alignItems: 'center', flexDirection: 'row', gap: 7, paddingTop: 4 },
+  ratedText: { fontFamily: fonts.bodyMedium, color: colors.muted, flex: 1, fontSize: 13 },
   helpCard: { alignItems: 'flex-start', flexDirection: 'row', gap: 11, marginHorizontal: 18 },
   helpCopy: { flex: 1, gap: 4 },
-  helpTitle: { color: colors.ink, fontSize: 12, fontWeight: '700' },
-  helpText: { color: colors.muted, fontSize: 11, lineHeight: 17 },
+  helpTitle: { fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 13 },
+  helpText: { fontFamily: fonts.body, color: colors.muted, fontSize: 12, lineHeight: 18 },
 })
