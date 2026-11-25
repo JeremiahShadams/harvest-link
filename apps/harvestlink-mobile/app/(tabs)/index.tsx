@@ -1,13 +1,32 @@
 import { Redirect } from 'expo-router'
-import { MarketplaceScreen } from '@/components/harvestlink/marketplace-screen'
+import { StyleSheet, View } from 'react-native'
+import { AppHeader } from '@/components/harvestlink/app-header'
 import { useHarvestLink } from '@/components/harvestlink/context'
+import { MarketplaceScreen } from '@/components/harvestlink/marketplace-screen'
+import { ProductCardSkeleton, ScreenScroll, SkeletonBox } from '@/components/harvestlink/ui'
 
 export default function MarketplaceRoute() {
-  const { profile, authLoading } = useHarvestLink()
+  const { authLoading, activeSpace } = useHarvestLink()
 
-  // Farmer and both accounts open straight into the farm cockpit (see docs/design-implementation-plan.md).
-  if (authLoading) return null
-  if (profile?.role === 'farmer' || profile?.role === 'both') return <Redirect href="/farmer" />
+  if (authLoading) {
+    return (
+      <ScreenScroll>
+        <AppHeader />
+        <View style={styles.skeletonWrap}>
+          <SkeletonBox height={190} radius={22} />
+          <SkeletonBox height={48} radius={14} />
+          <ProductCardSkeleton />
+          <ProductCardSkeleton />
+        </View>
+      </ScreenScroll>
+    )
+  }
+
+  if (activeSpace === 'farmer') return <Redirect href="/farmer" />
 
   return <MarketplaceScreen />
 }
+
+const styles = StyleSheet.create({
+  skeletonWrap: { gap: 14, paddingHorizontal: 18, paddingTop: 4 },
+})
