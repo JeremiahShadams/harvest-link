@@ -1,88 +1,112 @@
-import { Tabs } from 'expo-router/js-tabs'
+import { useMemo } from 'react'
+import { Tabs } from 'expo-router'
 import {
   ChartNoAxesColumn,
-  MessageSquare,
+  PackageCheck,
   ScanLine,
   ShoppingBag,
   Sprout,
   Store,
   User,
 } from 'lucide-react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useHarvestLink } from '@/components/harvestlink/context'
-import { C, FONT_BODY } from '@/components/harvestlink/design/tokens'
+import { colors, fonts } from '@/components/harvestlink/ui'
+import { useOrders } from '@/lib/harvestlink/use-data'
 
 export default function TabLayout() {
-  const { profile } = useHarvestLink()
-  const role = profile?.role ?? 'buyer'
-  const isFarmer = role === 'farmer' || role === 'both'
-  const isBuyer = role === 'buyer'
+  const { user, activeSpace, t } = useHarvestLink()
+  const { data: orders } = useOrders(user?.id ?? null)
+  const insets = useSafeAreaInsets()
+
+  const isFarmerSpace = activeSpace === 'farmer'
+  const isBuyerSpace = activeSpace === 'buyer'
+
+  const pendingFarmerCount = useMemo(
+    () => (orders ?? []).filter((order) => order.farmer_id === user?.id && order.status === 'pending').length,
+    [orders, user?.id],
+  )
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: C.farm800,
-        tabBarInactiveTintColor: C.slate400,
+        tabBarActiveTintColor: colors.pine,
+        tabBarInactiveTintColor: colors.muted,
         tabBarStyle: {
-          backgroundColor: C.white,
-          borderTopColor: C.slate100,
+          backgroundColor: colors.white,
+          borderTopColor: colors.line,
           borderTopWidth: 1,
+          height: 62 + Math.max(12, insets.bottom),
+          paddingBottom: Math.max(12, insets.bottom),
+          paddingTop: 8,
         },
-        tabBarLabelStyle: { fontFamily: FONT_BODY, fontSize: 10, fontWeight: '600', marginTop: 2 },
+        tabBarLabelStyle: {
+          fontFamily: fonts.bodyBold,
+          fontSize: 12,
+          marginTop: 2,
+        },
+        tabBarBadgeStyle: {
+          backgroundColor: colors.gold,
+          color: colors.ink,
+          fontFamily: fonts.bodyBold,
+          fontSize: 12,
+        },
         tabBarHideOnKeyboard: true,
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Market',
-          href: isBuyer ? undefined : null,
+          title: t('tabMarket'),
+          href: isBuyerSpace ? undefined : null,
           tabBarIcon: ({ color, size }) => <Store color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="farmer"
         options={{
-          title: 'Home',
-          href: isFarmer ? undefined : null,
+          title: t('tabHome'),
+          href: isFarmerSpace ? undefined : null,
           tabBarIcon: ({ color, size }) => <Sprout color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="harvests"
+        options={{
+          title: t('tabHarvests'),
+          href: isFarmerSpace ? undefined : null,
+          tabBarIcon: ({ color, size }) => <PackageCheck color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="orders"
         options={{
-          title: 'Orders',
+          title: t('tabOrders'),
+          tabBarBadge: isFarmerSpace && pendingFarmerCount > 0 ? pendingFarmerCount : undefined,
           tabBarIcon: ({ color, size }) => <ShoppingBag color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="chats"
-        options={{
-          title: 'Chats',
-          href: isFarmer ? undefined : null,
-          tabBarIcon: ({ color, size }) => <MessageSquare color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="signals"
         options={{
-          title: 'Signals',
-          href: isFarmer ? undefined : null,
+          title: t('tabSignals'),
+          href: isFarmerSpace ? undefined : null,
           tabBarIcon: ({ color, size }) => <ChartNoAxesColumn color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="scan"
         options={{
-          title: 'Freshness Scan',
-          href: isBuyer ? undefined : null,
+          title: t('tabScan'),
+          href: isBuyerSpace ? undefined : null,
           tabBarIcon: ({ color, size }) => <ScanLine color={color} size={size} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: 'Profile',
+          title: t('tabProfile'),
           tabBarIcon: ({ color, size }) => <User color={color} size={size} />,
         }}
       />
