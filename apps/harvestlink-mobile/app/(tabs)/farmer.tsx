@@ -1,4 +1,4 @@
-import { FarmerDashboardScreen } from '@/components/harvestlink/design/farmer-dashboard-screen'
+import { FarmerDashboardScreen } from '@/components/harvestlink/farmer-dashboard-screen'
 
 export default function FarmerRoute() {
   return <FarmerDashboardScreen />
