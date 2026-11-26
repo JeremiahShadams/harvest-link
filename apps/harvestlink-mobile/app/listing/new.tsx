@@ -1,4 +1,4 @@
-import { CreateListingScreen } from '@/components/harvestlink/design/create-listing-screen'
+import { CreateListingScreen } from '@/components/harvestlink/create-listing-screen'
 
 export default function NewListingRoute() {
   return <CreateListingScreen />
