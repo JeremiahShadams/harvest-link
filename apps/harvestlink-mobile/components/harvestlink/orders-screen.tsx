@@ -12,6 +12,7 @@ import {
   EmptyState,
   Eyebrow,
   fonts,
+  HarvestListCard,
   MessageBanner,
   OrderCardSkeleton,
   StatusBadge,
@@ -226,25 +227,108 @@ function OrderCard({
   }
 
   return (
-    <Card style={styles.orderCard}>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`View details for ${order.listing?.crop ?? 'order'}`}
-        onPress={() => router.push(`/order/${order.id}` as never)}
-        style={styles.cardTop}
-      >
-        <View style={styles.orderIdentity}>
-          <Text style={styles.crop} numberOfLines={1}>{order.listing?.crop ?? 'Fresh harvest'}</Text>
-          <Text style={styles.farm} numberOfLines={1}>
-            {order.listing?.farm_name ?? (isFarmerOrder ? order.contact?.buyer_name || 'Buyer' : 'Local farm')}
-          </Text>
-        </View>
+    <HarvestListCard
+      accessibilityLabel={`View details for ${order.listing?.crop ?? 'order'}`}
+      badge={
         <StatusBadge
           label={STATUS_LABELS[order.status]}
           tone={order.status === 'delivered' ? 'green' : order.status === 'pending' ? 'gold' : 'gray'}
         />
-      </Pressable>
+      }
+      footer={
+        <>
+          {/* Reconciled 5-step progress track matching ORDER_STATUSES 1:1 */}
+          <View style={styles.progressWrap}>
+            <View style={styles.progressRow}>
+              {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
+                <View key={step.status} style={styles.progressStep}>
+                  <View style={[styles.progressDot, stepIndex <= index && styles.progressDone]}>
+                    {stepIndex < index ? <Check color={colors.white} size={10} /> : null}
+                  </View>
+                  {stepIndex < ORDER_TIMELINE_STEPS.length - 1 ? (
+                    <View style={[styles.progressLine, stepIndex < index && styles.progressLineDone]} />
+                  ) : null}
+                </View>
+              ))}
+            </View>
+            <View style={styles.progressLabels}>
+              {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
+                <Text
+                  key={step.status}
+                  style={[styles.progressLabel, stepIndex <= index && styles.progressLabelActive]}
+                  numberOfLines={1}
+                >
+                  {step.shortLabel}
+                </Text>
+              ))}
+            </View>
+          </View>
 
+          <View style={styles.cardActionsRow}>
+            {isFarmerOrder && order.status !== 'delivered' ? (
+              <AppButton
+                label={
+                  order.status === 'pending'
+                    ? 'Accept order'
+                    : order.status === 'accepted'
+                      ? 'Mark ready'
+                      : order.status === 'ready'
+                        ? 'Start delivery'
+                        : 'Mark delivered'
+                }
+                onPress={onAdvance}
+                icon={<ArrowRight color={colors.white} size={16} />}
+                style={styles.actionFlex}
+              />
+            ) : (
+              <AppButton
+                label="Order details"
+                variant="quiet"
+                onPress={() => router.push(`/order/${order.id}` as never)}
+                style={styles.actionFlex}
+              />
+            )}
+
+            {phoneUrl ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Call counterparty"
+                onPress={() => void Linking.openURL(phoneUrl)}
+                style={styles.contactButton}
+              >
+                <Phone color={colors.pine} size={18} />
+              </Pressable>
+            ) : null}
+            {waUrl ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="WhatsApp counterparty"
+                onPress={() => void Linking.openURL(waUrl)}
+                style={styles.contactButton}
+              >
+                <MessageCircle color={colors.pine} size={18} />
+              </Pressable>
+            ) : null}
+          </View>
+
+          {!isFarmerOrder && order.status === 'delivered' && !order.rating ? (
+            <RatingForm rating={rating} setRating={setRating} note={note} setNote={setNote} onSave={() => void saveRating()} busy={busy} />
+          ) : null}
+
+          {!isFarmerOrder && order.status === 'delivered' && order.rating ? (
+            <View style={styles.rated}>
+              <Star color={colors.gold} fill={colors.gold} size={16} />
+              <Text style={styles.ratedText}>
+                You rated this harvest {order.rating} out of 5{order.rating_note ? ` — "${order.rating_note}"` : '.'}
+              </Text>
+            </View>
+          ) : null}
+        </>
+      }
+      onPress={() => router.push(`/order/${order.id}` as never)}
+      subtitle={order.listing?.farm_name ?? (isFarmerOrder ? order.contact?.buyer_name || 'Buyer' : 'Local farm')}
+      title={order.listing?.crop ?? 'Fresh harvest'}
+    >
       <View style={styles.orderMeta}>
         <View style={styles.metaItem}>
           <PackageCheck color={colors.leaf} size={15} />
@@ -256,94 +340,7 @@ function OrderCard({
         </View>
         <Text style={styles.date}>Placed {formatDate(order.created_at)} · {order.delivery_window}</Text>
       </View>
-
-      {/* Reconciled 5-step progress track matching ORDER_STATUSES 1:1 */}
-      <View style={styles.progressWrap}>
-        <View style={styles.progressRow}>
-          {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
-            <View key={step.status} style={styles.progressStep}>
-              <View style={[styles.progressDot, stepIndex <= index && styles.progressDone]}>
-                {stepIndex < index ? <Check color={colors.white} size={10} /> : null}
-              </View>
-              {stepIndex < ORDER_TIMELINE_STEPS.length - 1 ? (
-                <View style={[styles.progressLine, stepIndex < index && styles.progressLineDone]} />
-              ) : null}
-            </View>
-          ))}
-        </View>
-        <View style={styles.progressLabels}>
-          {ORDER_TIMELINE_STEPS.map((step, stepIndex) => (
-            <Text
-              key={step.status}
-              style={[styles.progressLabel, stepIndex <= index && styles.progressLabelActive]}
-              numberOfLines={1}
-            >
-              {step.shortLabel}
-            </Text>
-          ))}
-        </View>
-      </View>
-
-      <View style={styles.cardActionsRow}>
-        {isFarmerOrder && order.status !== 'delivered' ? (
-          <AppButton
-            label={
-              order.status === 'pending'
-                ? 'Accept order'
-                : order.status === 'accepted'
-                  ? 'Mark ready'
-                  : order.status === 'ready'
-                    ? 'Start delivery'
-                    : 'Mark delivered'
-            }
-            onPress={onAdvance}
-            icon={<ArrowRight color={colors.white} size={16} />}
-            style={styles.actionFlex}
-          />
-        ) : (
-          <AppButton
-            label="Order details"
-            variant="quiet"
-            onPress={() => router.push(`/order/${order.id}` as never)}
-            style={styles.actionFlex}
-          />
-        )}
-
-        {phoneUrl ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Call counterparty"
-            onPress={() => void Linking.openURL(phoneUrl)}
-            style={styles.contactButton}
-          >
-            <Phone color={colors.pine} size={18} />
-          </Pressable>
-        ) : null}
-        {waUrl ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="WhatsApp counterparty"
-            onPress={() => void Linking.openURL(waUrl)}
-            style={styles.contactButton}
-          >
-            <MessageCircle color={colors.pine} size={18} />
-          </Pressable>
-        ) : null}
-      </View>
-
-      {!isFarmerOrder && order.status === 'delivered' && !order.rating ? (
-        <RatingForm rating={rating} setRating={setRating} note={note} setNote={setNote} onSave={() => void saveRating()} busy={busy} />
-      ) : null}
-
-      {!isFarmerOrder && order.status === 'delivered' && order.rating ? (
-        <View style={styles.rated}>
-          <Star color={colors.gold} fill={colors.gold} size={16} />
-          <Text style={styles.ratedText}>
-            You rated this harvest {order.rating} out of 5{order.rating_note ? ` — "${order.rating_note}"` : '.'}
-          </Text>
-        </View>
-      ) : null}
-    </Card>
+    </HarvestListCard>
   )
 }
 
@@ -426,11 +423,6 @@ const styles = StyleSheet.create({
   bannerWrap: { paddingHorizontal: 18 },
   emptyWrap: { paddingHorizontal: 18 },
   list: { gap: 12, paddingHorizontal: 18 },
-  orderCard: { gap: 12, padding: 15 },
-  cardTop: { alignItems: 'flex-start', flexDirection: 'row', gap: 8, justifyContent: 'space-between', minHeight: 44 },
-  orderIdentity: { flex: 1, gap: 2, minWidth: 0 },
-  crop: { fontFamily: fonts.heading, color: colors.ink, fontSize: 17 },
-  farm: { fontFamily: fonts.body, color: colors.muted, fontSize: 13 },
   orderMeta: { gap: 6 },
   metaItem: { alignItems: 'center', flexDirection: 'row', gap: 7 },
   metaText: { fontFamily: fonts.bodyBold, color: colors.ink, fontSize: 13 },
