@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { router } from 'expo-router'
-import { ArrowLeft, Bell, CheckCheck } from 'lucide-react-native'
+import { Bell, CheckCheck } from 'lucide-react-native'
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { AppHeader } from '@/components/harvestlink/app-header'
@@ -13,6 +13,7 @@ import {
   Eyebrow,
   MessageBanner,
   OrderCardSkeleton,
+  StackHeader,
   StatusBadge,
   colors,
   fonts,
@@ -64,7 +65,7 @@ export function NotificationsScreen({ embedded = false }: { embedded?: boolean }
 
   const isLoading = Boolean(user && notificationsResult.isLoading && !notificationsResult.data)
 
-  const content = (
+  const scrollBody = (
     <ScrollView
       contentContainerStyle={styles.scrollContent}
       refreshControl={
@@ -77,39 +78,7 @@ export function NotificationsScreen({ embedded = false }: { embedded?: boolean }
       }
       showsVerticalScrollIndicator={false}
     >
-      {embedded ? (
-        <AppHeader />
-      ) : (
-        <View style={styles.topBar}>
-          <Pressable
-            accessibilityLabel="Back"
-            accessibilityRole="button"
-            hitSlop={8}
-            onPress={() => router.back()}
-            style={({ pressed }) => [styles.backBtn, pressed && styles.pressed]}
-          >
-            <ArrowLeft color={colors.pine} size={22} />
-          </Pressable>
-          <Text style={styles.headerTitle}>Updates</Text>
-          {unread > 0 ? (
-            <Pressable
-              accessibilityLabel="Mark all notifications read"
-              accessibilityRole="button"
-              disabled={markingAll}
-              onPress={() => {
-                triggerSelectionHaptic()
-                void markAllRead()
-              }}
-              style={({ pressed }) => [styles.markAllBtn, pressed && styles.pressed]}
-            >
-              <CheckCheck color={colors.pine} size={17} />
-              <Text style={styles.markAllText}>Mark all</Text>
-            </Pressable>
-          ) : (
-            <View style={styles.spacer} />
-          )}
-        </View>
-      )}
+      {embedded ? <AppHeader /> : null}
 
       {oneError || allError ? <MessageBanner>{oneError ?? allError}</MessageBanner> : null}
 
@@ -165,7 +134,33 @@ export function NotificationsScreen({ embedded = false }: { embedded?: boolean }
     </ScrollView>
   )
 
-  return embedded ? content : <SafeAreaView edges={['top', 'bottom']} style={styles.screen}>{content}</SafeAreaView>
+  return embedded ? (
+    scrollBody
+  ) : (
+    <SafeAreaView edges={['top', 'bottom']} style={styles.screen}>
+      <StackHeader
+        rightAction={
+          unread > 0 ? (
+            <Pressable
+              accessibilityLabel="Mark all notifications read"
+              accessibilityRole="button"
+              disabled={markingAll}
+              onPress={() => {
+                triggerSelectionHaptic()
+                void markAllRead()
+              }}
+              style={({ pressed }) => [styles.markAllBtn, pressed && styles.pressed]}
+            >
+              <CheckCheck color={colors.pine} size={17} />
+              <Text style={styles.markAllText}>Mark all</Text>
+            </Pressable>
+          ) : undefined
+        }
+        title="Updates"
+      />
+      {scrollBody}
+    </SafeAreaView>
+  )
 }
 
 const styles = StyleSheet.create({
@@ -177,27 +172,6 @@ const styles = StyleSheet.create({
     gap: space.md,
     padding: space.lg,
     paddingBottom: 40,
-  },
-  topBar: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: space.xs,
-  },
-  backBtn: {
-    alignItems: 'center',
-    backgroundColor: colors.white,
-    borderColor: colors.line,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  headerTitle: {
-    fontFamily: fonts.heading,
-    color: colors.pineDeep,
-    fontSize: 20,
   },
   markAllBtn: {
     alignItems: 'center',
@@ -212,10 +186,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bodyBold,
     color: colors.pine,
     fontSize: 13,
-  },
-  spacer: {
-    height: 44,
-    width: 44,
   },
   gap: {
     gap: space.md,
