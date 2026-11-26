@@ -1,5 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { ChevronDown } from 'lucide-react-native'
+import { Image, type ImageProps } from 'expo-image'
+import { router } from 'expo-router'
+import { ArrowLeft, ChevronDown } from 'lucide-react-native'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -578,6 +580,135 @@ export function KeyValueRow({ label, value, emphasis = false }: { label: string;
   )
 }
 
+export function StackHeader({
+  title,
+  onBack = () => router.back(),
+  backLabel = 'Back',
+  rightAction,
+  bordered = true,
+}: {
+  title: string
+  onBack?: () => void
+  backLabel?: string
+  rightAction?: ReactNode
+  bordered?: boolean
+}) {
+  return (
+    <View style={[styles.stackHeader, bordered && styles.stackHeaderBordered]}>
+      <Pressable
+        accessibilityLabel={backLabel}
+        accessibilityRole="button"
+        hitSlop={8}
+        onPress={() => {
+          triggerSelectionHaptic()
+          onBack()
+        }}
+        style={({ pressed }) => [styles.stackBackBtn, pressed && styles.buttonPressed]}
+      >
+        <ArrowLeft color={colors.pine} size={21} />
+      </Pressable>
+      <Text numberOfLines={1} style={styles.stackTitle}>
+        {title}
+      </Text>
+      <View style={styles.stackRightSlot}>{rightAction ?? <View style={styles.stackSpacer} />}</View>
+    </View>
+  )
+}
+
+export function HarvestListCard({
+  eyebrow,
+  title,
+  subtitle,
+  badge,
+  imageSource,
+  imageAccessibilityLabel,
+  imageVariant = 'square',
+  children,
+  footer,
+  onPress,
+  accessibilityLabel,
+  style,
+}: {
+  eyebrow?: string
+  title: string
+  subtitle?: string
+  badge?: ReactNode
+  imageSource?: ImageProps['source']
+  imageAccessibilityLabel?: string
+  imageVariant?: 'square' | 'tall'
+  children?: ReactNode
+  footer?: ReactNode
+  onPress?: () => void
+  accessibilityLabel?: string
+  style?: StyleProp<ViewStyle>
+}) {
+  const headerContent = (
+    <View style={styles.listCardTop}>
+      {imageSource ? (
+        <Image
+          accessibilityLabel={imageAccessibilityLabel}
+          contentFit="cover"
+          source={imageSource}
+          style={imageVariant === 'tall' ? styles.listCardThumbTall : styles.listCardThumb}
+          transition={160}
+        />
+      ) : null}
+      <View style={styles.listCardBody}>
+        <View style={styles.listCardHeaderRow}>
+          <View style={styles.listCardTitleWrap}>
+            {eyebrow ? (
+              <Text numberOfLines={1} style={styles.listCardEyebrow}>
+                {eyebrow}
+              </Text>
+            ) : null}
+            <Text numberOfLines={1} style={styles.listCardTitle}>
+              {title}
+            </Text>
+          </View>
+          {badge}
+        </View>
+        {subtitle ? (
+          <Text numberOfLines={1} style={styles.listCardSubtitle}>
+            {subtitle}
+          </Text>
+        ) : null}
+        {children}
+      </View>
+    </View>
+  )
+
+  if (onPress && !footer) {
+    return (
+      <Pressable
+        accessibilityLabel={accessibilityLabel ?? title}
+        accessibilityRole="button"
+        onPress={onPress}
+        style={({ pressed }) => [styles.listCard, pressed && styles.listCardPressed, style]}
+      >
+        {headerContent}
+      </Pressable>
+    )
+  }
+
+  return (
+    <View style={[styles.listCard, style]}>
+      {onPress ? (
+        <Pressable
+          accessibilityLabel={accessibilityLabel ?? title}
+          accessibilityRole="button"
+          onPress={onPress}
+          style={({ pressed }) => [styles.listCardHeaderTap, pressed && styles.listCardPressed]}
+        >
+          {headerContent}
+        </Pressable>
+      ) : (
+        headerContent
+      )}
+      {footer ? <View style={styles.listCardFooter}>{footer}</View> : null}
+    </View>
+  )
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   eyebrow: { fontFamily: fonts.bodyBold, color: colors.leaf, fontSize: 12, letterSpacing: 1.1, textTransform: 'uppercase' },
@@ -661,4 +792,23 @@ const styles = StyleSheet.create({
   keyValueLabel: { fontFamily: fonts.body, color: colors.muted, fontSize: 13 },
   keyValueValue: { fontFamily: fonts.bodyMedium, color: colors.ink, fontSize: 13 },
   keyValueEmphasis: { fontFamily: fonts.headingExtra, fontSize: 16 },
+  stackHeader: { alignItems: 'center', backgroundColor: colors.cream, flexDirection: 'row', gap: 10, justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 8 },
+  stackHeaderBordered: { borderBottomColor: colors.line, borderBottomWidth: 1 },
+  stackBackBtn: { alignItems: 'center', backgroundColor: colors.white, borderColor: colors.line, borderRadius: radii.md, borderWidth: 1, height: 44, justifyContent: 'center', width: 44 },
+  stackTitle: { color: colors.ink, flex: 1, fontFamily: fonts.heading, fontSize: 18, textAlign: 'center' },
+  stackRightSlot: { alignItems: 'flex-end', justifyContent: 'center', minWidth: 44 },
+  stackSpacer: { height: 44, width: 44 },
+  listCard: { backgroundColor: colors.white, borderColor: colors.line, borderRadius: 20, borderWidth: 1, gap: 12, overflow: 'hidden', padding: 14 },
+  listCardHeaderTap: { minHeight: 44 },
+  listCardPressed: { opacity: 0.88, transform: [{ scale: 0.995 }] },
+  listCardTop: { alignItems: 'center', flexDirection: 'row', gap: 13 },
+  listCardThumb: { backgroundColor: colors.paleGreen, borderRadius: 14, height: 76, width: 76 },
+  listCardThumbTall: { backgroundColor: colors.paleGreen, borderRadius: 14, height: 148, width: 112 },
+  listCardBody: { flex: 1, gap: 4, minWidth: 0 },
+  listCardHeaderRow: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
+  listCardTitleWrap: { flex: 1, gap: 1, minWidth: 0 },
+  listCardEyebrow: { color: colors.leaf, fontFamily: fonts.bodyBold, fontSize: 12, letterSpacing: 0.4, textTransform: 'uppercase' },
+  listCardTitle: { color: colors.ink, fontFamily: fonts.heading, fontSize: 18, letterSpacing: -0.3 },
+  listCardSubtitle: { color: colors.muted, fontFamily: fonts.body, fontSize: 13, lineHeight: 18 },
+  listCardFooter: { borderTopColor: colors.line, borderTopWidth: 1, gap: 10, paddingTop: 10 },
 })
