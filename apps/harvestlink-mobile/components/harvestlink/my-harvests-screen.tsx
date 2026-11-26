@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import { router } from 'expo-router'
-import { Image } from 'expo-image'
 import { Eye, EyeOff, Pencil, Plus, Trash2, X } from 'lucide-react-native'
 import {
   Alert,
@@ -18,11 +17,11 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { AppHeader } from './app-header'
 import {
   AppButton,
-  Card,
   colors,
   EmptyState,
   Eyebrow,
   fonts,
+  HarvestListCard,
   MessageBanner,
   OrderCardSkeleton,
   SegmentedControl,
@@ -209,68 +208,66 @@ export function MyHarvestsScreen() {
               const unitLabel = formatUnitSingular(item.unit)
               const tone = item.status === 'active' ? 'green' : item.status === 'sold' ? 'gold' : 'gray'
               return (
-                <Card key={item.id} style={styles.card}>
-                  <View style={styles.cardTop}>
-                    <Image source={listingImage(item)} style={styles.thumb} contentFit="cover" />
-                    <View style={styles.cardCopy}>
-                      <View style={styles.cardTitleRow}>
-                        <Text style={styles.crop} numberOfLines={1}>{item.crop}</Text>
-                        <StatusBadge label={item.status === 'active' ? 'Active' : item.status === 'sold' ? 'Sold' : 'Hidden'} tone={tone} />
-                      </View>
-                      <Text style={styles.price}>
-                        {formatNaira(item.price_per_kg)} / {unitLabel}
-                      </Text>
-                      <Text style={styles.meta}>
-                        {formatUnitCount(item.available_kg, item.unit)} left · {item.area} · {formatDate(item.created_at)}
-                      </Text>
-                    </View>
-                  </View>
-
-                  <View style={styles.actionsRow}>
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Edit ${item.crop}`}
-                      onPress={() => openEditor(item)}
-                      style={styles.actionPill}
-                    >
-                      <Pencil color={colors.pine} size={15} />
-                      <Text style={styles.actionText}>Edit</Text>
-                    </Pressable>
-
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={item.status === 'active' ? `Hide ${item.crop}` : `Activate ${item.crop}`}
-                      onPress={() => void toggleVisibility(item)}
-                      disabled={updateBusy}
-                      style={styles.actionPill}
-                    >
-                      {item.status === 'active' ? <EyeOff color={colors.pine} size={15} /> : <Eye color={colors.pine} size={15} />}
-                      <Text style={styles.actionText}>{item.status === 'active' ? 'Pause' : 'Show'}</Text>
-                    </Pressable>
-
-                    {item.status !== 'sold' ? (
+                <HarvestListCard
+                  key={item.id}
+                  badge={<StatusBadge label={item.status === 'active' ? 'Active' : item.status === 'sold' ? 'Sold' : 'Hidden'} tone={tone} />}
+                  footer={
+                    <View style={styles.actionsRow}>
                       <Pressable
                         accessibilityRole="button"
-                        accessibilityLabel={`Mark ${item.crop} sold`}
-                        onPress={() => void markSold(item)}
+                        accessibilityLabel={`Edit ${item.crop}`}
+                        onPress={() => openEditor(item)}
+                        style={styles.actionPill}
+                      >
+                        <Pencil color={colors.pine} size={15} />
+                        <Text style={styles.actionText}>Edit</Text>
+                      </Pressable>
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={item.status === 'active' ? `Hide ${item.crop}` : `Activate ${item.crop}`}
+                        onPress={() => void toggleVisibility(item)}
                         disabled={updateBusy}
                         style={styles.actionPill}
                       >
-                        <Text style={styles.actionText}>Mark sold</Text>
+                        {item.status === 'active' ? <EyeOff color={colors.pine} size={15} /> : <Eye color={colors.pine} size={15} />}
+                        <Text style={styles.actionText}>{item.status === 'active' ? 'Pause' : 'Show'}</Text>
                       </Pressable>
-                    ) : null}
 
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Delete ${item.crop}`}
-                      onPress={() => confirmDelete(item)}
-                      disabled={deleteBusy}
-                      style={styles.deleteButton}
-                    >
-                      <Trash2 color={colors.red} size={17} />
-                    </Pressable>
-                  </View>
-                </Card>
+                      {item.status !== 'sold' ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel={`Mark ${item.crop} sold`}
+                          onPress={() => void markSold(item)}
+                          disabled={updateBusy}
+                          style={styles.actionPill}
+                        >
+                          <Text style={styles.actionText}>Mark sold</Text>
+                        </Pressable>
+                      ) : null}
+
+                      <Pressable
+                        accessibilityRole="button"
+                        accessibilityLabel={`Delete ${item.crop}`}
+                        onPress={() => confirmDelete(item)}
+                        disabled={deleteBusy}
+                        style={styles.deleteButton}
+                      >
+                        <Trash2 color={colors.red} size={17} />
+                      </Pressable>
+                    </View>
+                  }
+                  imageAccessibilityLabel={item.crop}
+                  imageSource={listingImage(item)}
+                  title={item.crop}
+                >
+                  <Text style={styles.price}>
+                    {formatNaira(item.price_per_kg)} / {unitLabel}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {formatUnitCount(item.available_kg, item.unit)} left · {item.area} · {formatDate(item.created_at)}
+                  </Text>
+                </HarvestListCard>
               )
             })}
           </View>
@@ -353,15 +350,9 @@ const styles = StyleSheet.create({
   filterWrap: { paddingHorizontal: 18 },
   pad: { paddingHorizontal: 18 },
   list: { gap: 12, paddingHorizontal: 18 },
-  card: { gap: 12, padding: 14 },
-  cardTop: { flexDirection: 'row', gap: 12, alignItems: 'center' },
-  thumb: { backgroundColor: colors.paleGreen, borderRadius: 12, height: 68, width: 68 },
-  cardCopy: { flex: 1, gap: 3, minWidth: 0 },
-  cardTitleRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  crop: { fontFamily: fonts.heading, color: colors.ink, flex: 1, fontSize: 17 },
   price: { fontFamily: fonts.headingExtra, color: colors.pine, fontSize: 15 },
   meta: { fontFamily: fonts.body, color: colors.muted, fontSize: 12 },
-  actionsRow: { alignItems: 'center', borderTopColor: colors.line, borderTopWidth: 1, flexDirection: 'row', gap: 8, paddingTop: 10 },
+  actionsRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   actionPill: { alignItems: 'center', backgroundColor: colors.paleGreen, borderRadius: 11, flexDirection: 'row', gap: 6, justifyContent: 'center', minHeight: 44, paddingHorizontal: 12 },
   actionText: { fontFamily: fonts.bodyBold, color: colors.pine, fontSize: 13 },
   deleteButton: { alignItems: 'center', backgroundColor: colors.paleRed, borderRadius: 11, height: 44, justifyContent: 'center', marginLeft: 'auto', width: 44 },
