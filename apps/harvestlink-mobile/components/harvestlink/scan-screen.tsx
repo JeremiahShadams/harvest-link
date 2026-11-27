@@ -27,7 +27,7 @@ import {
 } from '@/components/harvestlink/ui'
 import { triggerImpactHaptic, triggerSelectionHaptic } from '@/lib/harvestlink/haptics'
 import { useAnalyzeScan, useScans, type SelectedScanPhoto } from '@/lib/harvestlink/use-data'
-import { formatDate } from '@/lib/harvestlink/utils'
+import { formatConfidence, formatDate } from '@/lib/harvestlink/utils'
 
 export function ScanScreen() {
   const { user, latestScan, setLatestScan, profile } = useHarvestLink()
@@ -186,7 +186,7 @@ export function ScanScreen() {
             <View style={styles.resultHeader}>
               <Text style={styles.resultCrop}>{latestScan.crop}</Text>
               <StatusBadge
-                label={`${latestScan.remaining_days} days left · ${latestScan.confidence}%`}
+                label={`${latestScan.remaining_days} days left · ${formatConfidence(latestScan.confidence)}`}
                 tone={latestScan.remaining_days <= 2 ? 'gold' : 'green'}
               />
             </View>
@@ -242,7 +242,7 @@ export function ScanScreen() {
                   />
                 </View>
                 <Text style={styles.scanMeta}>
-                  {scan.confidence}% confidence · {formatDate(scan.created_at)}
+                  {formatConfidence(scan.confidence)} confidence · {formatDate(scan.created_at)}
                 </Text>
               </Card>
             ))}
