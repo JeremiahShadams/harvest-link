@@ -191,3 +191,224 @@ AS $$
   WHERE o.id = ANY(p_order_ids)
     AND (o.buyer_id = auth.uid() OR o.farmer_id = auth.uid());
 $$;
+
+-- 6. Advance order status (farmer only: pending → accepted → ready → out_for_delivery → delivered)
+CREATE OR REPLACE FUNCTION public.advance_order_status(
+  p_order_id uuid,
+  p_next_status text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_order public.orders%ROWTYPE;
+  v_user_id uuid := auth.uid();
+  v_statuses text[] := ARRAY['pending','accepted','ready','out_for_delivery','delivered'];
+  v_cur_idx int;
+  v_next_idx int;
+BEGIN
+  SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'order_not_found';
+  END IF;
+
+  IF v_order.farmer_id <> v_user_id THEN
+    RAISE EXCEPTION 'not_order_farmer';
+  END IF;
+
+  SELECT i INTO v_cur_idx FROM generate_subscripts(v_statuses, 1) g(i) WHERE v_statuses[i] = v_order.status;
+  SELECT i INTO v_next_idx FROM generate_subscripts(v_statuses, 1) g(i) WHERE v_statuses[i] = p_next_status;
+
+  IF v_next_idx IS NULL OR v_next_idx <> v_cur_idx + 1 THEN
+    RAISE EXCEPTION 'invalid_status_transition';
+  END IF;
+
+  UPDATE public.orders SET status = p_next_status WHERE id = p_order_id;
+
+  -- Notify counterparty
+  INSERT INTO public.harvest_notifications (user_id, kind, title, message, order_id)
+  VALUES (
+    CASE WHEN v_order.buyer_id = v_user_id THEN v_order.farmer_id ELSE v_order.buyer_id END,
+    'order_status',
+    'Order status updated',
+    format('Your order is now %s.', p_next_status),
+    p_order_id
+  );
+END;
+$$;
+
+-- 7. Create activity_report_tokens table if missing (for signed report links)
+CREATE TABLE IF NOT EXISTS public.activity_report_tokens (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL UNIQUE REFERENCES public.profiles(id) ON DELETE CASCADE,
+  token text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  expires_at timestamptz NOT NULL DEFAULT (now() + interval '30 days')
+);
+
+ALTER TABLE public.activity_report_tokens
+  ADD COLUMN IF NOT EXISTS expires_at timestamptz NOT NULL DEFAULT (now() + interval '30 days');
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'activity_report_tokens_user_id_key'
+  ) THEN
+    ALTER TABLE public.activity_report_tokens
+      ADD CONSTRAINT activity_report_tokens_user_id_key UNIQUE (user_id);
+  END IF;
+END $$;
+
+-- 8. Create activity report token (farmer / both)
+CREATE OR REPLACE FUNCTION public.create_activity_report()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_profile public.profiles%ROWTYPE;
+  v_token text := gen_random_uuid()::text;
+BEGIN
+  IF v_user_id IS NULL THEN
+    RAISE EXCEPTION 'authentication_required';
+  END IF;
+
+  SELECT * INTO v_profile FROM public.profiles WHERE id = v_user_id;
+  IF NOT FOUND OR v_profile.role NOT IN ('farmer', 'both') THEN
+    RAISE EXCEPTION 'farmer_profile_required';
+  END IF;
+
+  INSERT INTO public.activity_report_tokens (user_id, token, created_at, expires_at)
+  VALUES (v_user_id, v_token, now(), now() + interval '30 days')
+  ON CONFLICT (user_id) DO UPDATE
+    SET token = v_token,
+        created_at = now(),
+        expires_at = now() + interval '30 days';
+
+  RETURN v_token;
+END;
+$$;
+
+-- 9. Public read-only report lookup (used by /report/[token])
+CREATE OR REPLACE FUNCTION public.get_public_activity_report(p_token text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_row public.activity_report_tokens%ROWTYPE;
+  v_profile public.profiles%ROWTYPE;
+  v_since timestamptz := now() - interval '90 days';
+  v_listings_created int := 0;
+  v_active_listings int := 0;
+  v_orders_received int := 0;
+  v_orders_delivered int := 0;
+  v_sales_value_ngn numeric := 0;
+  v_scans_completed int := 0;
+BEGIN
+  SELECT * INTO v_row
+  FROM public.activity_report_tokens
+  WHERE token = p_token AND (expires_at IS NULL OR expires_at > now());
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT * INTO v_profile FROM public.profiles WHERE id = v_row.user_id;
+  IF NOT FOUND THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT count(*), count(*) FILTER (WHERE status = 'active' AND available_kg > 0)
+  INTO v_listings_created, v_active_listings
+  FROM public.listings
+  WHERE farmer_id = v_row.user_id AND created_at >= v_since;
+
+  SELECT count(*),
+         count(*) FILTER (WHERE status = 'delivered'),
+         coalesce(sum(quantity_kg * unit_price_per_kg) FILTER (WHERE status = 'delivered'), 0)
+  INTO v_orders_received, v_orders_delivered, v_sales_value_ngn
+  FROM public.orders
+  WHERE farmer_id = v_row.user_id AND created_at >= v_since;
+
+  SELECT count(*) INTO v_scans_completed
+  FROM public.produce_scans
+  WHERE user_id = v_row.user_id AND created_at >= v_since;
+
+  RETURN jsonb_build_object(
+    'farmer_name', v_profile.display_name,
+    'farm_name', coalesce(v_profile.farm_name, 'Independent farm'),
+    'generated_at', v_row.created_at,
+    'expires_at', v_row.expires_at,
+    'period_days', 90,
+    'listings_created', v_listings_created,
+    'active_listings', v_active_listings,
+    'orders_received', v_orders_received,
+    'orders_delivered', v_orders_delivered,
+    'sales_value_ngn', v_sales_value_ngn,
+    'scans_completed', v_scans_completed
+  );
+END;
+$$;
+
+-- 10. Rate a delivered order (buyer only)
+CREATE OR REPLACE FUNCTION public.rate_delivered_order(
+  p_order_id uuid,
+  p_rating int,
+  p_note text DEFAULT ''
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_order public.orders%ROWTYPE;
+  v_user_id uuid := auth.uid();
+BEGIN
+  SELECT * INTO v_order FROM public.orders WHERE id = p_order_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'order_not_found';
+  END IF;
+
+  IF v_order.buyer_id <> v_user_id THEN
+    RAISE EXCEPTION 'not_order_buyer';
+  END IF;
+
+  IF v_order.status <> 'delivered' THEN
+    RAISE EXCEPTION 'order_not_rateable';
+  END IF;
+
+  IF p_rating < 1 OR p_rating > 5 THEN
+    RAISE EXCEPTION 'invalid_rating';
+  END IF;
+
+  UPDATE public.orders
+  SET rating = p_rating, rating_note = NULLIF(btrim(p_note), '')
+  WHERE id = p_order_id;
+END;
+$$;
+
+-- 11. RLS for activity_report_tokens
+ALTER TABLE public.activity_report_tokens ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'activity_report_tokens' AND policyname = 'Users read own report tokens'
+  ) THEN
+    CREATE POLICY "Users read own report tokens"
+      ON public.activity_report_tokens FOR SELECT
+      TO authenticated
+      USING (auth.uid() = user_id);
+  END IF;
+END $$;
+
+-- Verification check to run in Supabase SQL Editor after applying migration:
+-- SELECT proname FROM pg_proc p JOIN pg_namespace n ON p.pronamespace = n.oid
+-- WHERE n.nspname = 'public'
+--   AND proname IN ('place_order','advance_order_status','rate_delivered_order','get_order_contacts','create_activity_report','get_public_activity_report');
