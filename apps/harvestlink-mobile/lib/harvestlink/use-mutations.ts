@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { File as LocalExpoFile } from 'expo-file-system'
 import { Platform } from 'react-native'
 import { useSWRConfig } from 'swr'
@@ -663,6 +663,14 @@ export function useAnalyzeScan() {
   const { saveScan } = useSaveScan()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const abortRef = useRef<AbortController | null>(null)
+
+  const cancel = useCallback(() => {
+    abortRef.current?.abort()
+    abortRef.current = null
+    setBusy(false)
+    setError(null)
+  }, [])
 
   const analyze = useCallback(
     async (
@@ -676,6 +684,10 @@ export function useAnalyzeScan() {
         triggerErrorHaptic()
         return { error: msg, success: false, scan: null }
       }
+
+      abortRef.current?.abort()
+      const controller = new AbortController()
+      abortRef.current = controller
 
       setBusy(true)
       setError(null)
@@ -693,7 +705,7 @@ export function useAnalyzeScan() {
         if (Platform.OS === 'web' && photo.file) {
           formData.append('image', photo.file, photo.name)
         } else if (Platform.OS === 'web') {
-          const response = await fetch(photo.uri)
+          const response = await fetch(photo.uri, { signal: controller.signal })
           const blob = await response.blob()
           if (blob.size > MAX_PHOTO_BYTES) {
             throw new Error('Choose a photo smaller than 6 MB for a quicker estimate.')
@@ -707,20 +719,31 @@ export function useAnalyzeScan() {
           method: 'POST',
           headers: { Authorization: `Bearer ${session.access_token}` },
           body: formData,
+          signal: controller.signal,
         })
         const body = await response.json() as ShelfLifeResult | { error?: string }
         if (!response.ok) throw new Error('error' in body && body.error ? body.error : 'This scan could not be completed.')
+
+        if (controller.signal.aborted) {
+          return { error: null, success: false, scan: null }
+        }
 
         const scan = body as ShelfLifeResult
         setLatestScan(scan)
         const saved = await saveScan(scan)
         setBusy(false)
+        abortRef.current = null
         triggerSuccessHaptic()
         return { error: saved.error, success: true, scan }
       } catch (caught) {
+        if (controller.signal.aborted || (caught instanceof Error && caught.name === 'AbortError')) {
+          setBusy(false)
+          return { error: null, success: false, scan: null }
+        }
         const msg = caught instanceof Error ? caught.message : 'The scan could not be completed. Please try another photo.'
         setError(msg)
         setBusy(false)
+        abortRef.current = null
         triggerErrorHaptic()
         return { error: msg, success: false, scan: null }
       }
@@ -728,7 +751,7 @@ export function useAnalyzeScan() {
     [saveScan, setLatestScan],
   )
 
-  return { analyze, busy, error, setError }
+  return { analyze, cancel, busy, error, setError }
 }
 
 export type UpdateProfileInput = {
