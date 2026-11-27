@@ -108,6 +108,15 @@ export function nextOrderStatus(status: HarvestOrder['status']): HarvestOrder['s
   return index < 0 || index === ORDER_STATUSES.length - 1 ? null : ORDER_STATUSES[index + 1]
 }
 
+/** The shelf-scan API returns confidence as 0–1 (decimal). Render as whole-number %. */
+export function formatConfidence(confidence: number | string | null | undefined): string {
+  if (confidence == null || confidence === '') return '—'
+  const num = Number(confidence)
+  if (!Number.isFinite(num)) return '—'
+  const pct = num <= 1 ? Math.round(num * 100) : Math.round(num)
+  return `${Math.max(0, Math.min(100, pct))}%`
+}
+
 export function getListingCategory(listing: Pick<Listing, 'category' | 'crop'>) {
   const value = `${listing.category} ${listing.crop}`.toLowerCase()
   if (value.includes('tomato')) return 'Tomatoes'
