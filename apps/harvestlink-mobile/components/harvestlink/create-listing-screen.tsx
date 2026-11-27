@@ -53,6 +53,7 @@ import {
   formatNaira,
   formatUnitCount,
   formatUnitSingular,
+  formatConfidence,
   isDiscreteUnit,
   todayInLagos,
 } from '@/lib/harvestlink/utils'
@@ -409,7 +410,7 @@ export function CreateListingScreen() {
 
                   <View style={styles.rowFields}>
                     <TextField
-                      hint={scanConfidence ? `Verified from scan (${scanConfidence}% confidence)` : '1 to 60 days'}
+                      hint={scanConfidence != null ? `Verified from scan (${formatConfidence(scanConfidence)} confidence)` : '1 to 60 days'}
                       keyboardType="number-pad"
                       label="Shelf life (days)"
                       onChangeText={setShelfLifeDays}
